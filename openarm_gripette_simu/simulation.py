@@ -5,14 +5,13 @@ Joint behavior (gains, damping, friction) is tuned in the MuJoCo XML model.
 """
 
 from pathlib import Path
+import re
+import tempfile
 import numpy as np
 import mujoco
 import mujoco.viewer
+from openarm_gripette_model import OPENARM_RIGHT_DIR, OPENARM_RIGHT_SCENE
 from .camera import FisheyeCamera
-
-# Path to the default scene XML
-_MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "openarm_gripette_model" / "openarm_gripette_model" / "openarm_right"
-_DEFAULT_SCENE = _MODEL_DIR / "scene.xml"
 
 # Joint names in actuator order (matches robot.xml <actuator> section)
 ACTUATOR_NAMES = [
@@ -34,12 +33,45 @@ ARM_ACTUATOR_NAMES = ACTUATOR_NAMES[:7]
 GRIPETTE_CAM = "gripette_cam"
 
 
+def _load_model(scene_xml: Path) -> mujoco.MjModel:
+    """Load a MuJoCo model, injecting the correct meshdir for the robot assets.
+
+    MuJoCo resolves mesh paths relative to the main XML file. When a scene
+    file in a different directory includes robot.xml, the mesh paths break.
+    This function injects an absolute meshdir so meshes are always found.
+    """
+    xml = scene_xml.read_text()
+
+    # Only inject meshdir if not already set in the scene
+    if 'meshdir=' not in xml.split('<include')[0]:
+        meshdir_tag = f'<compiler meshdir="{OPENARM_RIGHT_DIR}"/>'
+        # Insert before the first <include> so it takes effect
+        xml = re.sub(
+            r'(<include\s)',
+            meshdir_tag + r'\n    \1',
+            xml,
+            count=1,
+        )
+        # Write to a temp file next to the scene so relative includes still work
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.xml', dir=scene_xml.parent, delete=False
+        ) as f:
+            f.write(xml)
+            tmp_path = Path(f.name)
+        try:
+            return mujoco.MjModel.from_xml_path(str(tmp_path))
+        finally:
+            tmp_path.unlink()
+
+    return mujoco.MjModel.from_xml_path(str(scene_xml))
+
+
 class Simulation:
     """MuJoCo simulation of the OpenArm + Gripette."""
 
     def __init__(self, scene_xml: str | Path | None = None):
-        scene_xml = Path(scene_xml) if scene_xml else _DEFAULT_SCENE
-        self.model = mujoco.MjModel.from_xml_path(str(scene_xml))
+        scene_xml = Path(scene_xml).resolve() if scene_xml else OPENARM_RIGHT_SCENE
+        self.model = _load_model(scene_xml)
         self.data = mujoco.MjData(self.model)
 
         # Build actuator name -> index mapping

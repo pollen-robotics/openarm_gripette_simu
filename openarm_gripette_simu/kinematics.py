@@ -7,9 +7,7 @@ Only computes desired joint positions — no physics, no simulation.
 from pathlib import Path
 import numpy as np
 import placo
-
-# Path to the URDF directory (sibling repo)
-_MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "openarm_gripette_model" / "openarm_gripette_model" / "openarm_right"
+from openarm_gripette_model import OPENARM_RIGHT_DIR
 
 # The 7 arm joints in MuJoCo ordering (excludes gripper and mimic joints)
 ARM_JOINT_NAMES = [
@@ -30,7 +28,7 @@ class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
 
     def __init__(self, model_dir: str | Path | None = None):
-        model_dir = Path(model_dir) if model_dir else _MODEL_DIR
+        model_dir = Path(model_dir) if model_dir else OPENARM_RIGHT_DIR
         self.robot = placo.RobotWrapper(str(model_dir))
 
         # Set up the IK solver

@@ -17,4 +17,6 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-openarm-gripette-model = { path = "../openarm_gripette_model", editable = true }
+openarm-gripette-model = { git = "https://github.com/pollen-robotics/openarm_gripette_model" }
+# For local development:
+# openarm-gripette-model = { path = "../openarm_gripette_model", editable = true }
