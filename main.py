@@ -5,6 +5,8 @@ import numpy as np
 import cv2
 from openarm_gripette_simu import Simulation, Kinematics
 
+CAMERA_FPS = 30
+
 
 def main():
     sim = Simulation()
@@ -34,17 +36,25 @@ def main():
     sim.set_arm_commands(target_joints)
     print("\nMoving arm to Cartesian target... (press 'q' in camera window to quit)")
 
+    dt = sim.model.opt.timestep
+    cam_interval = max(1, int(1.0 / (CAMERA_FPS * dt)))
+    t_wall = time.perf_counter()
+    step = 0
+
     while viewer.is_running():
         sim.step()
-        viewer.sync()
+        step += 1
 
-        # Render and display the Gripette camera (RGB -> BGR for OpenCV)
-        img = sim.render_camera()
-        cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-        time.sleep(sim.model.opt.timestep)
+        if step % cam_interval == 0:
+            viewer.sync()
+            img = sim.render_camera()
+            cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+            t_target = t_wall + step * dt
+            t_now = time.perf_counter()
+            if t_target > t_now:
+                time.sleep(t_target - t_now)
 
     cv2.destroyAllWindows()
 

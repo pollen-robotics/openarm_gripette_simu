@@ -4,7 +4,6 @@ Provides forward and inverse kinematics targeting the 'camera' frame.
 Only computes desired joint positions — no physics, no simulation.
 """
 
-from pathlib import Path
 import numpy as np
 import placo
 from openarm_gripette_model import OPENARM_RIGHT_DIR
@@ -27,9 +26,9 @@ CAMERA_FRAME = "camera"
 class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
 
-    def __init__(self, model_dir: str | Path | None = None):
-        model_dir = Path(model_dir) if model_dir else OPENARM_RIGHT_DIR
-        self.robot = placo.RobotWrapper(str(model_dir))
+    def __init__(self, model_dir=None):
+        model_dir = str(model_dir) if model_dir else str(OPENARM_RIGHT_DIR)
+        self.robot = placo.RobotWrapper(model_dir)
 
         # Set up the IK solver
         self.solver = self.robot.make_solver()
@@ -82,16 +81,13 @@ class Kinematics:
         Returns:
             7-element array of arm joint angles (rad).
         """
-        # Seed the solver with current joint positions
         if current_joint_positions is not None:
             for i, name in enumerate(ARM_JOINT_NAMES):
                 self.robot.set_joint(name, current_joint_positions[i])
             self.robot.update_kinematics()
 
-        # Update the frame task target
         self._frame_task.T_world_frame = target_pose
 
-        # Iterate the solver
         for _ in range(n_iter):
             self.solver.solve(True)
             self.robot.update_kinematics()

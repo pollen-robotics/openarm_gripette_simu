@@ -22,15 +22,14 @@ CAMERA_K4 = 0.16387495554310924
 # MuJoCo pinhole render settings
 # fovy=130° covers 74.4° diagonal — enough for 70.5° max corner angle
 PINHOLE_FOVY = 130.0
-# Render at 2x resolution for quality (pinhole stretches edges)
-PINHOLE_RENDER_SCALE = 2
+# Render scale: 1x is usually sufficient given the mild distortion (k1=-0.045)
+PINHOLE_RENDER_SCALE = 1
 
 
-def _kb8_inverse_theta(r_d: np.ndarray, k1: float, k2: float, k3: float, k4: float, n_iter: int = 20) -> np.ndarray:
-    """Solve KannalaBrandt8 inverse: find theta given r_d = theta_d.
+def _kb8_inverse_theta(r_d: np.ndarray, k1, k2, k3, k4, n_iter=20):
+    """Solve KannalaBrandt8 inverse: find theta given r_d.
 
     theta_d = theta + k1*theta^3 + k2*theta^5 + k3*theta^7 + k4*theta^9
-    Uses Newton's method.
     """
     theta = r_d.copy()
     for _ in range(n_iter):
@@ -40,17 +39,12 @@ def _kb8_inverse_theta(r_d: np.ndarray, k1: float, k2: float, k3: float, k4: flo
         t8 = t4 * t4
         f = theta * (1 + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - r_d
         fp = 1 + 3 * k1 * t2 + 5 * k2 * t4 + 7 * k3 * t6 + 9 * k4 * t8
-        theta = theta - f / fp
+        theta -= f / fp
     return theta
 
 
-def build_fisheye_remap(
-    out_width: int = CAMERA_WIDTH,
-    out_height: int = CAMERA_HEIGHT,
-    pinhole_width: int | None = None,
-    pinhole_height: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Precompute the remap tables from fisheye pixels to pinhole pixels.
+def _build_fisheye_remap(pinhole_width, pinhole_height):
+    """Precompute remap tables from fisheye pixels to pinhole pixels.
 
     For each pixel (u, v) in the output fisheye image:
       1. Unproject via KannalaBrandt8 inverse to get a 3D ray
@@ -58,11 +52,6 @@ def build_fisheye_remap(
 
     Returns (map_x, map_y) for use with cv2.remap().
     """
-    if pinhole_width is None:
-        pinhole_width = out_width * PINHOLE_RENDER_SCALE
-    if pinhole_height is None:
-        pinhole_height = out_height * PINHOLE_RENDER_SCALE
-
     # Pinhole intrinsics (derived from MuJoCo fovy)
     half_fovy = np.radians(PINHOLE_FOVY / 2)
     fy_pin = (pinhole_height / 2) / np.tan(half_fovy)
@@ -72,8 +61,8 @@ def build_fisheye_remap(
 
     # Grid of output fisheye pixel coordinates
     u_fish, v_fish = np.meshgrid(
-        np.arange(out_width, dtype=np.float32),
-        np.arange(out_height, dtype=np.float32),
+        np.arange(CAMERA_WIDTH, dtype=np.float32),
+        np.arange(CAMERA_HEIGHT, dtype=np.float32),
     )
 
     # Normalized fisheye coordinates
@@ -90,26 +79,15 @@ def build_fisheye_remap(
     scale = np.ones_like(r_d)
     scale[mask] = np.tan(theta[mask]) / r_d[mask]
 
-    pin_x = scale * mx
-    pin_y = scale * my
-
     # Project to pinhole pixel coordinates
-    map_x = (fx_pin * pin_x + cx_pin).astype(np.float32)
-    map_y = (fy_pin * pin_y + cy_pin).astype(np.float32)
+    map_x = (fx_pin * scale * mx + cx_pin).astype(np.float32)
+    map_y = (fy_pin * scale * my + cy_pin).astype(np.float32)
 
     return map_x, map_y
 
 
 class FisheyeCamera:
-    """Applies fisheye distortion to MuJoCo pinhole renders.
-
-    Usage:
-        cam = FisheyeCamera()
-        # In MuJoCo, set gripette_cam fovy to cam.pinhole_fovy
-        # Render at cam.pinhole_width x cam.pinhole_height
-        pinhole_img = renderer.render()
-        fisheye_img = cam.distort(pinhole_img)
-    """
+    """Applies fisheye distortion to MuJoCo pinhole renders."""
 
     def __init__(self, render_scale: int = PINHOLE_RENDER_SCALE):
         self.out_width = CAMERA_WIDTH
@@ -117,20 +95,8 @@ class FisheyeCamera:
         self.pinhole_width = CAMERA_WIDTH * render_scale
         self.pinhole_height = CAMERA_HEIGHT * render_scale
         self.pinhole_fovy = PINHOLE_FOVY
-
-        # Precompute remap tables
-        self._map_x, self._map_y = build_fisheye_remap(
-            self.out_width, self.out_height,
-            self.pinhole_width, self.pinhole_height,
-        )
+        self._map_x, self._map_y = _build_fisheye_remap(self.pinhole_width, self.pinhole_height)
 
     def distort(self, pinhole_img: np.ndarray) -> np.ndarray:
-        """Apply fisheye distortion to a pinhole-rendered image.
-
-        Args:
-            pinhole_img: RGB image from MuJoCo (pinhole_height x pinhole_width x 3).
-
-        Returns:
-            Fisheye image (out_height x out_width x 3).
-        """
+        """Apply fisheye distortion to a pinhole-rendered image."""
         return cv2.remap(pinhole_img, self._map_x, self._map_y, cv2.INTER_LINEAR, borderValue=0)

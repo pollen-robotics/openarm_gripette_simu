@@ -11,6 +11,7 @@ import cv2
 from openarm_gripette_simu import Simulation, Kinematics
 
 SCENE = Path(__file__).parent.parent / "scenes" / "table_red_cube.xml"
+CAMERA_FPS = 30
 
 
 def main():
@@ -18,9 +19,12 @@ def main():
     kin = Kinematics()
     viewer = sim.launch_passive_viewer()
 
-    # Start: arm looking down at the table
-    # Pitch forward, elbow bent so the camera points at the table surface
-    q_start = np.array([0.3, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
+    dt = sim.model.opt.timestep
+    cam_interval = max(1, int(1.0 / (CAMERA_FPS * dt)))
+
+    # Start: arm pointing forward, elbow bent
+    # q_start = np.array([0.3, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
+    q_start = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     T_start = kin.forward(q_start)
     print(f"Start camera position: {T_start[:3, 3]}")
 
@@ -28,18 +32,29 @@ def main():
     sim.set_arm_commands(q_start)
     for _ in range(1000):
         sim.step()
-        viewer.sync()
-        time.sleep(sim.model.opt.timestep)
 
-    # Get the cube position from the simulation
+
+    #init position
+    q_start = np.array([1.0, 0.0, 0.0, -2.44, 0.0, 0.0, 0.0])
+    T_start = kin.forward(q_start)
+    # print(f"Start camera position: {T_start[:3, 3]}")
+
+    # Move to start pose
+    sim.set_arm_commands(q_start)
+    for _ in range(1000):
+        sim.step()
+
+
+
+    viewer.sync()
+
+    # Target: camera above the cube, looking down
     cube_pos = sim.data.body("red_cube").xpos.copy()
     print(f"Red cube position: {cube_pos}")
 
-    # Define a target pose: camera above the cube, looking down
     T_target = T_start.copy()
-    # Move camera towards the cube (adjust x and z to be above it)
-    T_target[0, 3] = cube_pos[0]       # align x with cube
-    T_target[2, 3] = cube_pos[2] + 0.15  # 15cm above cube
+    T_target[0, 3] = cube_pos[0]
+    T_target[2, 3] = cube_pos[2] + 0.15
 
     target_joints = kin.inverse(T_target, current_joint_positions=q_start)
     T_check = kin.forward(target_joints)
@@ -49,32 +64,42 @@ def main():
     # Interpolate from start to target
     n_steps = 500
     print("\nMoving above the cube... (press 'q' in camera window to quit)")
+    t_wall = time.perf_counter()
+    step = 0
+
     for i in range(n_steps):
         t = i / n_steps
-        q_cmd = q_start + t * (target_joints - q_start)
-        sim.set_arm_commands(q_cmd)
+        sim.set_arm_commands(q_start + t * (target_joints - q_start))
         sim.step()
-        viewer.sync()
+        step += 1
 
-        if i % 10 == 0:
+        if step % cam_interval == 0:
+            viewer.sync()
             img = sim.render_camera()
             cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 cv2.destroyAllWindows()
                 return
+            t_target = t_wall + step * dt
+            t_now = time.perf_counter()
+            if t_target > t_now:
+                time.sleep(t_target - t_now)
 
-        time.sleep(sim.model.opt.timestep)
-
-    # Hold position and keep showing camera
+    # Hold position
     print("Above the cube. Close viewer to exit.")
     while viewer.is_running():
         sim.step()
-        viewer.sync()
-        img = sim.render_camera()
-        cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-        time.sleep(sim.model.opt.timestep)
+        step += 1
+        if step % cam_interval == 0:
+            viewer.sync()
+            img = sim.render_camera()
+            cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+            t_target = t_wall + step * dt
+            t_now = time.perf_counter()
+            if t_target > t_now:
+                time.sleep(t_target - t_now)
 
     cv2.destroyAllWindows()
 
