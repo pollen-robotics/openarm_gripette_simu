@@ -1,10 +1,9 @@
 """ArmServicer — gRPC service for delta Cartesian arm control.
 
-Maintains the current Cartesian state of the end-effector. When a delta
-command arrives, applies it to the current state, runs IK, and sends
-joint commands to MuJoCo.
+Maintains an internal Cartesian target (position + orientation). Delta commands
+accumulate on this target, avoiding drift from physics errors. IK solves for
+the accumulated target, and MuJoCo tracks the resulting joint commands.
 
-State representation: 11D [x, y, z, r6d_0..r6d_5, proximal, distal]
 Delta commands: 9D [dx, dy, dz, dr6d_0..dr6d_5] (position + 6D rotation)
 """
 
@@ -28,8 +27,18 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         self._lock = lock
         self._start_time = start_time
 
-    def _get_state(self):
-        """Read current arm state: position + 6D rotation + joints."""
+        # Internal Cartesian target — initialized from current FK
+        self._sync_target_from_sim()
+
+    def _sync_target_from_sim(self):
+        """Initialize the internal target from the current sim state."""
+        arm_joints = self._sim.get_arm_positions()
+        T = self._kin.forward(arm_joints)
+        self._target_pos = T[:3, 3].copy()
+        self._target_r6d = rotation_matrix_to_6d(T[:3, :3]).copy()
+
+    def _get_state_from_sim(self):
+        """Read actual arm state from the simulation (for GetArmState)."""
         arm_joints = self._sim.get_arm_positions()
         T = self._kin.forward(arm_joints)
         pos = T[:3, 3]
@@ -47,23 +56,28 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 )
 
             with self._lock:
-                pos, r6d, arm_joints = self._get_state()
+                # Accumulate deltas on the internal target (not the sim state)
+                self._target_pos = self._target_pos + delta_pos
+                self._target_r6d = self._target_r6d + delta_r6d
 
-                # Apply position delta
-                new_pos = pos + delta_pos
-
-                # Apply rotation delta: add in 6D space, then re-orthogonalize
-                new_r6d = r6d + delta_r6d
-                new_rot = rotation_6d_to_matrix(new_r6d)
+                # Re-orthogonalize the rotation
+                target_rot = rotation_6d_to_matrix(self._target_r6d)
 
                 # Build target 4x4 transform
                 T_target = np.eye(4)
-                T_target[:3, :3] = new_rot
-                T_target[:3, 3] = new_pos
+                T_target[:3, :3] = target_rot
+                T_target[:3, 3] = self._target_pos
 
-                # IK: target pose -> joint angles
+                # IK from current sim joints (for good initial guess)
+                arm_joints = self._sim.get_arm_positions()
                 target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints)
                 self._sim.set_arm_commands(target_joints)
+
+                # Clamp internal target to what the IK actually achieved,
+                # so unreachable targets don't accumulate past workspace limits
+                T_achieved = self._kin.forward(target_joints)
+                self._target_pos = T_achieved[:3, 3].copy()
+                self._target_r6d = rotation_matrix_to_6d(T_achieved[:3, :3]).copy()
 
             return arm_pb2.ArmCommandResponse(success=True)
 
@@ -73,7 +87,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
     def GetArmState(self, request, context):
         with self._lock:
-            pos, r6d, arm_joints = self._get_state()
+            pos, r6d, arm_joints = self._get_state_from_sim()
 
         return arm_pb2.ArmState(
             x=float(pos[0]),
@@ -84,7 +98,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         )
 
     def Reset(self, request, context):
-        """Teleport the arm to a joint configuration (for episode resets)."""
+        """Teleport the arm and re-sync the internal Cartesian target."""
         try:
             joints = np.array(request.joint_positions)
             if len(joints) != 7:
@@ -93,6 +107,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 )
             with self._lock:
                 self._sim.reset_arm(joints)
+                self._sync_target_from_sim()
             logger.info(f"Arm reset to {joints.tolist()}")
             return arm_pb2.ArmCommandResponse(success=True)
         except Exception as e:
