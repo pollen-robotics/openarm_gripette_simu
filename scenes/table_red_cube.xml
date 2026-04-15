@@ -4,7 +4,7 @@
     <visual>
         <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
         <rgba haze="0.15 0.25 0.35 1" />
-        <global azimuth="160" elevation="-20" offwidth="2592" offheight="1944" />
+        <global azimuth="160" elevation="-20" offwidth="1296" offheight="972" />
     </visual>
 
     <asset>
@@ -29,7 +29,7 @@
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
 
         <!-- Wooden table: 60cm x 40cm surface, 40cm height, in front of robot (+X) -->
-        <body name="table" pos="0.35 0 0">
+        <body name="table" pos="0.45 0 0">
             <!-- Tabletop -->
             <geom name="tabletop" type="box" size="0.30 0.20 0.015" pos="0 0 0.385"
                 material="wood" mass="20" />

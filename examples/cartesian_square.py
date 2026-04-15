@@ -1,6 +1,6 @@
 """Move the arm end-effector along a square trajectory in Cartesian space.
 
-The camera frame traces a 6cm x 6cm square in the XZ plane while
+The camera frame traces a 20cm x 20cm square in the YZ plane while
 maintaining a fixed orientation.
 """
 
@@ -8,6 +8,9 @@ import time
 import numpy as np
 import cv2
 from openarm_gripette_simu import Simulation, Kinematics
+
+# Render camera at ~30fps, not every physics step
+CAMERA_FPS = 30
 
 
 def interpolate_waypoints(waypoints: list[np.ndarray], n_steps: int) -> list[np.ndarray]:
@@ -25,21 +28,10 @@ def main():
     sim = Simulation()
     kin = Kinematics()
 
-    # Start from a bent-arm pose (more natural than neutral)
-    # q_start = np.array([-0.5, -0.3, 0.0, -1.0, 0.0, 0.0, 0.0])
     q_start = np.array([0.0, 0.0, 0.0, -1.57079632679, 0.0, 0.0, 0.0])
     T_center = kin.forward(q_start)
     center_pos = T_center[:3, 3].copy()
     print(f"Square center: {center_pos}")
-
-    # # Define a 6cm x 6cm square in the XZ plane around the current position
-    # half = 0.03
-    # square_offsets = [
-    #     np.array([half, 0, half]),
-    #     np.array([half, 0, -half]),
-    #     np.array([-half, 0, -half]),
-    #     np.array([-half, 0, half]),
-    # ]
 
     half = 0.10
     square_offsets = [
@@ -48,7 +40,6 @@ def main():
         np.array([0, -half, -half]),
         np.array([0, -half, half]),
     ]
-
 
     # Solve IK for each corner (keep orientation fixed)
     corner_joints = []
@@ -73,27 +64,33 @@ def main():
     sim.set_arm_commands(corner_joints[0])
     for _ in range(1000):
         sim.step()
-        viewer.sync()
-        time.sleep(sim.model.opt.timestep)
+    viewer.sync()
 
     # Run the square trajectory in a loop
     print("Running square trajectory... (press 'q' in camera window to quit)")
+    dt = sim.model.opt.timestep
+    cam_interval = max(1, int(1.0 / (CAMERA_FPS * dt)))
     step = 0
+    t_wall = time.perf_counter()
+
     while viewer.is_running():
         q_cmd = trajectory[step % len(trajectory)]
         sim.set_arm_commands(q_cmd)
         sim.step()
-        viewer.sync()
+        step += 1
 
-        # Show camera every few steps
-        if step % 10 == 0:
+        # Display at ~30fps: render camera + sync viewer + sleep to real time
+        if step % cam_interval == 0:
+            viewer.sync()
             img = sim.render_camera()
             cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-
-        step += 1
-        time.sleep(sim.model.opt.timestep)
+            # Sleep to match real time
+            t_target = t_wall + step * dt
+            t_now = time.perf_counter()
+            if t_target > t_now:
+                time.sleep(t_target - t_now)
 
     cv2.destroyAllWindows()
 

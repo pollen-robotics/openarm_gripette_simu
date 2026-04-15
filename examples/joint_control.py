@@ -7,12 +7,17 @@ import time
 import numpy as np
 import cv2
 from openarm_gripette_simu import Simulation
-from openarm_gripette_simu.simulation import ARM_ACTUATOR_NAMES
+from openarm_gripette_simu.kinematics import ARM_JOINT_NAMES
+
+CAMERA_FPS = 30
 
 
 def main():
     sim = Simulation()
     viewer = sim.launch_passive_viewer()
+
+    dt = sim.model.opt.timestep
+    cam_interval = max(1, int(1.0 / (CAMERA_FPS * dt)))
 
     q_cmd = np.zeros(7)
     joint_targets = [
@@ -26,31 +31,42 @@ def main():
     ]
 
     print("Moving each joint in sequence...")
+    t_wall = time.perf_counter()
+    step = 0
+
     for joint_name, target in joint_targets:
-        idx = ARM_ACTUATOR_NAMES.index(joint_name)
+        idx = ARM_JOINT_NAMES.index(joint_name)
         q_cmd[idx] = target
         sim.set_arm_commands(q_cmd)
         print(f"  {joint_name} -> {target:.1f} rad")
 
-        # Let it settle
-        for step in range(500):
+        for _ in range(500):
             sim.step()
-            viewer.sync()
-            if step % 10 == 0:
+            step += 1
+            if step % cam_interval == 0:
+                viewer.sync()
                 img = sim.render_camera()
                 cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
-            time.sleep(sim.model.opt.timestep)
+                t_target = t_wall + step * dt
+                t_now = time.perf_counter()
+                if t_target > t_now:
+                    time.sleep(t_target - t_now)
 
     print("\nAll joints moved. Close the viewer to exit.")
     while viewer.is_running():
         sim.step()
-        viewer.sync()
-        img = sim.render_camera()
-        cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-        time.sleep(sim.model.opt.timestep)
+        step += 1
+        if step % cam_interval == 0:
+            viewer.sync()
+            img = sim.render_camera()
+            cv2.imshow("Gripette camera", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+            t_target = t_wall + step * dt
+            t_now = time.perf_counter()
+            if t_target > t_now:
+                time.sleep(t_target - t_now)
 
     cv2.destroyAllWindows()
 

@@ -9,8 +9,13 @@ dependencies = [
     "placo>=0.9",
     "numpy",
     "opencv-contrib-python",
+    "grpcio>=1.60",
+    "protobuf>=4.25",
     "openarm-gripette-model",
 ]
+
+[project.optional-dependencies]
+dev = ["grpcio-tools>=1.60"]
 
 [build-system]
 requires = ["hatchling"]
