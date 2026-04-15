@@ -31,7 +31,7 @@
         <!-- Wooden table: 60cm x 40cm surface, 40cm height, in front of robot (+X) -->
         <body name="table" pos="0.45 0 0">
             <!-- Tabletop -->
-            <geom name="tabletop" type="box" size="0.30 0.20 0.015" pos="0 0 0.385"
+            <geom name="tabletop" type="box" size="0.30 0.30 0.015" pos="0 0 0.385"
                 material="wood" mass="20" />
             <!-- Four legs -->
             <geom name="leg_1" type="box" size="0.02 0.02 0.185" pos="0.26 0.16 0.185"
@@ -45,7 +45,7 @@
         </body>
 
         <!-- Red cube: 3cm, movable, sitting on the table -->
-        <body name="red_cube" pos="0.30 0 0.415">
+        <body name="red_cube" pos="0.45 -0.2 0.415">
             <freejoint name="red_cube_joint" />
             <geom name="red_cube" type="box" size="0.015 0.015 0.015"
                 material="red_cube" mass="0.05"

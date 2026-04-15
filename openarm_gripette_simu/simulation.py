@@ -66,6 +66,31 @@ class Simulation:
         self._renderer = None
         self._cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, GRIPETTE_CAM)
 
+    def reset_joints(self, positions: np.ndarray, joint_names: list[str] | None = None):
+        """Teleport joints to the given positions (no physics stepping).
+
+        Sets qpos directly, updates actuator targets to match, and
+        recomputes all derived quantities. No collision with the environment.
+        """
+        if joint_names is None:
+            joint_names = ACTUATOR_NAMES
+        for name, pos in zip(joint_names, positions):
+            self.data.joint(name).qpos[0] = pos
+        # Also set the mimic joint if r_wrist_roll is being set
+        if "r_wrist_roll" in joint_names:
+            idx = joint_names.index("r_wrist_roll")
+            self.data.joint("r_wrist_roll_mimic").qpos[0] = -positions[idx]
+        # Zero velocities
+        self.data.qvel[:] = 0
+        # Set actuator targets to match so the arm holds position
+        self.set_joint_commands(positions, joint_names)
+        # Recompute all derived quantities (positions, contacts, etc.)
+        mujoco.mj_forward(self.model, self.data)
+
+    def reset_arm(self, positions: np.ndarray):
+        """Teleport the 7 arm joints to the given positions."""
+        self.reset_joints(positions, ARM_JOINT_NAMES)
+
     def step(self):
         """Advance the simulation by one timestep."""
         mujoco.mj_step(self.model, self.data)

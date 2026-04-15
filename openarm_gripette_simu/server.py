@@ -30,11 +30,16 @@ VIEWER_FPS = 60
 class SimulationServer:
     """MuJoCo simulation with gRPC interfaces for the Gripette and arm."""
 
-    def __init__(self, scene_xml: str | Path | None = None):
+    def __init__(self, scene_xml: str | Path | None = None, initial_arm_joints=None):
         self._sim = Simulation(scene_xml)
         self._kin = Kinematics()
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
+
+        if initial_arm_joints is not None:
+            import numpy as np
+            self._sim.reset_arm(np.asarray(initial_arm_joints, dtype=float))
+            logger.info(f"Arm initialized to {list(initial_arm_joints)}")
 
     def _physics_loop(self):
         """Step physics at the model's timestep rate (background thread)."""

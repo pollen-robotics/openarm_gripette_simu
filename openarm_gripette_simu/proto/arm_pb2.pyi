@@ -44,6 +44,12 @@ class ArmState(_message.Message):
     joint_positions: _containers.RepeatedScalarFieldContainer[float]
     def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ..., z: _Optional[float] = ..., r6d: _Optional[_Iterable[float]] = ..., joint_positions: _Optional[_Iterable[float]] = ...) -> None: ...
 
+class ResetRequest(_message.Message):
+    __slots__ = ("joint_positions",)
+    JOINT_POSITIONS_FIELD_NUMBER: _ClassVar[int]
+    joint_positions: _containers.RepeatedScalarFieldContainer[float]
+    def __init__(self, joint_positions: _Optional[_Iterable[float]] = ...) -> None: ...
+
 class ArmPingRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

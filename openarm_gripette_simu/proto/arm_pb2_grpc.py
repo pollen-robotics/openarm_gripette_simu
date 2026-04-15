@@ -44,6 +44,11 @@ class ArmServiceStub(object):
                 request_serializer=arm__pb2.GetArmStateRequest.SerializeToString,
                 response_deserializer=arm__pb2.ArmState.FromString,
                 _registered_method=True)
+        self.Reset = channel.unary_unary(
+                '/openarm.ArmService/Reset',
+                request_serializer=arm__pb2.ResetRequest.SerializeToString,
+                response_deserializer=arm__pb2.ArmCommandResponse.FromString,
+                _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/openarm.ArmService/Ping',
                 request_serializer=arm__pb2.ArmPingRequest.SerializeToString,
@@ -68,6 +73,13 @@ class ArmServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Reset(self, request, context):
+        """Teleport the arm to a joint configuration (for episode resets)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Ping(self, request, context):
         """Health check
         """
@@ -87,6 +99,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     servicer.GetArmState,
                     request_deserializer=arm__pb2.GetArmStateRequest.FromString,
                     response_serializer=arm__pb2.ArmState.SerializeToString,
+            ),
+            'Reset': grpc.unary_unary_rpc_method_handler(
+                    servicer.Reset,
+                    request_deserializer=arm__pb2.ResetRequest.FromString,
+                    response_serializer=arm__pb2.ArmCommandResponse.SerializeToString,
             ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
@@ -148,6 +165,33 @@ class ArmService(object):
             '/openarm.ArmService/GetArmState',
             arm__pb2.GetArmStateRequest.SerializeToString,
             arm__pb2.ArmState.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Reset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openarm.ArmService/Reset',
+            arm__pb2.ResetRequest.SerializeToString,
+            arm__pb2.ArmCommandResponse.FromString,
             options,
             channel_credentials,
             insecure,

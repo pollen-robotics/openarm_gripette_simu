@@ -83,6 +83,22 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
             joint_positions=arm_joints.tolist(),
         )
 
+    def Reset(self, request, context):
+        """Teleport the arm to a joint configuration (for episode resets)."""
+        try:
+            joints = np.array(request.joint_positions)
+            if len(joints) != 7:
+                return arm_pb2.ArmCommandResponse(
+                    success=False, error=f"Expected 7 joint values, got {len(joints)}"
+                )
+            with self._lock:
+                self._sim.reset_arm(joints)
+            logger.info(f"Arm reset to {joints.tolist()}")
+            return arm_pb2.ArmCommandResponse(success=True)
+        except Exception as e:
+            logger.exception("Reset failed")
+            return arm_pb2.ArmCommandResponse(success=False, error=str(e))
+
     def Ping(self, request, context):
         uptime = time.monotonic() - self._start_time
         return arm_pb2.ArmPingResponse(status="ok", uptime_seconds=uptime)

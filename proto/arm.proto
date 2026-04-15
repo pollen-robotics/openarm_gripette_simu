@@ -6,6 +6,8 @@ service ArmService {
   rpc SendCartesianDelta (CartesianDelta) returns (ArmCommandResponse);
   // Read the current arm state (Cartesian pose + joint positions)
   rpc GetArmState (GetArmStateRequest) returns (ArmState);
+  // Teleport the arm to a joint configuration (for episode resets)
+  rpc Reset (ResetRequest) returns (ArmCommandResponse);
   // Health check
   rpc Ping (ArmPingRequest) returns (ArmPingResponse);
 }
@@ -30,6 +32,10 @@ message ArmState {
   float z = 3;                         // meters
   repeated float r6d = 4;              // 6 values: current 6D rotation
   repeated float joint_positions = 5;  // 7 arm joint angles (rad)
+}
+
+message ResetRequest {
+  repeated float joint_positions = 1;  // 7 arm joint angles (rad)
 }
 
 message ArmPingRequest {}
