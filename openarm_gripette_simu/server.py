@@ -1,6 +1,7 @@
 """Simulation gRPC server.
 
-Physics runs in the main thread (with optional viewer), gRPC servers in background:
+Physics and camera rendering run in the main thread (with optional viewer).
+gRPC servers run in background threads and read cached camera frames.
   - GripperService (port 50051): same API as the real Gripette
   - ArmService (port 50052): delta Cartesian arm control
 """
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 GRIPPER_PORT = 50051
 ARM_PORT = 50052
 VIEWER_FPS = 60
+CAMERA_FPS = 10  # camera rendering rate (matches real Gripette stream)
 
 
 class SimulationServer:
@@ -35,6 +37,9 @@ class SimulationServer:
         self._kin = Kinematics()
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
+
+        # Cached camera frame — rendered in the main thread, read by gRPC
+        self._camera_frame = self._sim.render_camera()
 
         if initial_arm_joints is not None:
             import numpy as np
@@ -59,7 +64,7 @@ class SimulationServer:
         """Start the gRPC servers in background thread pools."""
         self._gripper_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
         gripper_pb2_grpc.add_GripperServiceServicer_to_server(
-            GripperServicer(self._sim, self._lock, self._start_time),
+            GripperServicer(self._sim, self, self._lock, self._start_time),
             self._gripper_server,
         )
         self._gripper_server.add_insecure_port(f"0.0.0.0:{gripper_port}")
@@ -75,6 +80,10 @@ class SimulationServer:
         self._arm_server.start()
         logger.info(f"Gripper gRPC server on port {gripper_port}")
         logger.info(f"Arm gRPC server on port {arm_port}")
+
+    def get_camera_frame(self):
+        """Get the latest cached camera frame (thread-safe)."""
+        return self._camera_frame
 
     def start(self, gripper_port: int = GRIPPER_PORT, arm_port: int = ARM_PORT):
         """Start gRPC servers + physics in background (non-blocking, headless)."""
@@ -101,13 +110,14 @@ class SimulationServer:
     ):
         """Run the simulation (blocking). Call from the main thread.
 
-        gRPC servers run in background threads. Physics steps in the main
-        thread with an optional MuJoCo viewer synced at ~60fps.
+        Physics, camera rendering, and viewer sync all happen in the main thread.
+        gRPC servers run in background threads and read cached camera frames.
         """
         self._start_grpc(gripper_port, arm_port)
 
         dt = self._sim.model.opt.timestep
         viewer_interval = max(1, int(1.0 / (VIEWER_FPS * dt)))
+        camera_interval = max(1, int(1.0 / (CAMERA_FPS * dt)))
 
         viewer = None
         if not headless:
@@ -123,6 +133,11 @@ class SimulationServer:
             while self._running and (viewer is None or viewer.is_running()):
                 with self._lock:
                     self._sim.step()
+
+                    # Render camera in the main thread at CAMERA_FPS
+                    if step % camera_interval == 0:
+                        self._camera_frame = self._sim.render_camera()
+
                 step += 1
 
                 if viewer is not None and step % viewer_interval == 0:

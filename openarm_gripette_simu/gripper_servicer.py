@@ -1,7 +1,7 @@
 """GripperServicer — simulated Gripette gRPC service.
 
 Mimics the real Gripette API (gripper.proto) using MuJoCo simulation.
-Camera frames are rendered from MuJoCo and JPEG-encoded.
+Camera frames are read from a cache rendered by the main thread.
 Motor commands control the proximal/distal joints.
 """
 
@@ -21,8 +21,9 @@ STREAM_INTERVAL = 1.0 / STREAM_HZ
 
 class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
 
-    def __init__(self, sim, lock: threading.Lock, start_time: float):
+    def __init__(self, sim, server, lock: threading.Lock, start_time: float):
         self._sim = sim
+        self._server = server  # SimulationServer, for get_camera_frame()
         self._lock = lock
         self._start_time = start_time
 
@@ -38,10 +39,12 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
 
         while context.is_active():
             with self._lock:
-                img = self._sim.render_camera()
                 pos1, pos2 = self._get_motor_positions()
 
-            # Encode as JPEG (outside lock)
+            # Read cached camera frame (rendered in main thread, no GL conflict)
+            img = self._server.get_camera_frame()
+
+            # Encode as JPEG
             bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             _, jpeg_data = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
@@ -82,7 +85,6 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         return gripper_pb2.MotorState(motor1_position=pos1, motor2_position=pos2)
 
     def SetTorque(self, request, context):
-        # No-op in simulation (motors are always position-controlled)
         return gripper_pb2.TorqueResponse(success=True)
 
     def Ping(self, request, context):

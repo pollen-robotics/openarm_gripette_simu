@@ -47,7 +47,7 @@
         <!-- Red cube: 3cm, movable, sitting on the table -->
         <body name="red_cube" pos="0.45 -0.2 0.415">
             <freejoint name="red_cube_joint" />
-            <geom name="red_cube" type="box" size="0.015 0.015 0.015"
+            <geom name="red_cube" type="box" size="0.015 0.015 0.055"
                 material="red_cube" mass="0.05"
                 friction="0.8 0.01 0.001" condim="4"
                 solref="0.005 1" solimp="0.98 0.98 0.001" />

@@ -63,8 +63,15 @@ class Simulation:
 
         # Fisheye camera model (precomputes remap tables)
         self._fisheye = FisheyeCamera()
-        self._renderer = None
         self._cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, GRIPETTE_CAM)
+
+        # Create the offscreen renderer eagerly so its GL context is
+        # initialized before the viewer (avoids GLX threading conflicts)
+        self._renderer = mujoco.Renderer(
+            self.model,
+            height=self._fisheye.pinhole_height,
+            width=self._fisheye.pinhole_width,
+        )
 
     def reset_joints(self, positions: np.ndarray, joint_names: list[str] | None = None):
         """Teleport joints to the given positions (no physics stepping).
@@ -122,12 +129,6 @@ class Simulation:
         Returns:
             RGB uint8 array of shape (972, 1296, 3).
         """
-        if self._renderer is None:
-            self._renderer = mujoco.Renderer(
-                self.model,
-                height=self._fisheye.pinhole_height,
-                width=self._fisheye.pinhole_width,
-            )
         self._renderer.update_scene(self.data, camera=self._cam_id)
         return self._fisheye.distort(self._renderer.render())
 

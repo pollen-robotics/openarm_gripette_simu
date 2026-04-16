@@ -8,7 +8,7 @@ dependencies = [
     "mujoco>=3.6",
     "placo>=0.9",
     "numpy",
-    "opencv-contrib-python",
+    "opencv-python>=4.9",
     "grpcio>=1.60",
     "protobuf>=4.25",
     "openarm-gripette-model",

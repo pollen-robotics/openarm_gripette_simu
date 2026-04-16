@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 START_JOINTS = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
 
 # Cube nominal position (matches table_red_cube.xml)
-CUBE_NOMINAL_X = 0.45
-CUBE_NOMINAL_Y = -0.2
+CUBE_NOMINAL_X = 0.40
+CUBE_NOMINAL_Y = -0.15
 CUBE_Z = 0.415
 
 # Randomization ranges
 CUBE_X_NOISE = 0.06
-CUBE_Y_NOISE = 0.08
+CUBE_Y_NOISE = 0.2
 CUBE_YAW_NOISE = np.pi
 ARM_JOINT_NOISE = 0.08
 
@@ -40,7 +40,7 @@ TABLE_Y_MIN = -0.285
 TABLE_Y_MAX = 0.285
 
 # Success threshold: cube displacement in XY (meters)
-CUBE_MOVED_THRESHOLD = 0.003
+CUBE_MOVED_THRESHOLD = 0.005
 
 
 class ArmServicer(arm_pb2_grpc.ArmServiceServicer):

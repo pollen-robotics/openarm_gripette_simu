@@ -35,15 +35,16 @@ logger = logging.getLogger(__name__)
 SCENE = Path(__file__).parent.parent / "scenes" / "table_red_cube.xml"
 
 # Start config
-START_JOINTS = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
+# START_JOINTS = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
+START_JOINTS = np.array([0.35, 0.0, 0.0, -1.81, 0.0, 0.0, 0.0])
 
 # Nominal cube position (matches table_red_cube.xml)
-CUBE_NOMINAL_X = 0.45
-CUBE_NOMINAL_Y = -0.2
+CUBE_NOMINAL_X = 0.40
+CUBE_NOMINAL_Y = -0.15
 
 # Randomization
 CUBE_X_NOISE = 0.06     # ±6cm in X (limited by arm reach)
-CUBE_Y_NOISE = 0.08     # ±8cm in Y (limited by table edge)
+CUBE_Y_NOISE = 0.2     # ±8cm in Y (limited by table edge)
 CUBE_YAW_NOISE = np.pi  # full rotation around Z
 ARM_JOINT_NOISE = 0.08  # ±0.08 rad arm start
 
