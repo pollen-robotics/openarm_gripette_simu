@@ -50,6 +50,32 @@ class ResetRequest(_message.Message):
     joint_positions: _containers.RepeatedScalarFieldContainer[float]
     def __init__(self, joint_positions: _Optional[_Iterable[float]] = ...) -> None: ...
 
+class ResetResponse(_message.Message):
+    __slots__ = ("success", "error", "cube_x", "cube_y", "cube_z")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    CUBE_X_FIELD_NUMBER: _ClassVar[int]
+    CUBE_Y_FIELD_NUMBER: _ClassVar[int]
+    CUBE_Z_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    error: str
+    cube_x: float
+    cube_y: float
+    cube_z: float
+    def __init__(self, success: bool = ..., error: _Optional[str] = ..., cube_x: _Optional[float] = ..., cube_y: _Optional[float] = ..., cube_z: _Optional[float] = ...) -> None: ...
+
+class SuccessStatusRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class SuccessStatusResponse(_message.Message):
+    __slots__ = ("goal_reached", "cube_displacement")
+    GOAL_REACHED_FIELD_NUMBER: _ClassVar[int]
+    CUBE_DISPLACEMENT_FIELD_NUMBER: _ClassVar[int]
+    goal_reached: bool
+    cube_displacement: float
+    def __init__(self, goal_reached: bool = ..., cube_displacement: _Optional[float] = ...) -> None: ...
+
 class ArmPingRequest(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

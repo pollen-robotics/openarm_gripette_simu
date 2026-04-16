@@ -6,8 +6,11 @@ service ArmService {
   rpc SendCartesianDelta (CartesianDelta) returns (ArmCommandResponse);
   // Read the current arm state (Cartesian pose + joint positions)
   rpc GetArmState (GetArmStateRequest) returns (ArmState);
-  // Teleport the arm to a joint configuration (for episode resets)
-  rpc Reset (ResetRequest) returns (ArmCommandResponse);
+  // Reset the episode: teleport arm + randomize cube
+  // If joint_positions is empty, arm start is randomized too
+  rpc Reset (ResetRequest) returns (ResetResponse);
+  // Check if the current episode goal is achieved (cube touched)
+  rpc GetSuccessStatus (SuccessStatusRequest) returns (SuccessStatusResponse);
   // Health check
   rpc Ping (ArmPingRequest) returns (ArmPingResponse);
 }
@@ -35,7 +38,22 @@ message ArmState {
 }
 
 message ResetRequest {
-  repeated float joint_positions = 1;  // 7 arm joint angles (rad)
+  repeated float joint_positions = 1;  // 7 arm joint angles (rad), empty = randomize
+}
+
+message ResetResponse {
+  bool success = 1;
+  string error = 2;
+  float cube_x = 3;  // cube position after reset
+  float cube_y = 4;
+  float cube_z = 5;
+}
+
+message SuccessStatusRequest {}
+
+message SuccessStatusResponse {
+  bool goal_reached = 1;           // true if cube was touched (moved from initial position)
+  float cube_displacement = 2;     // how far the cube moved (meters)
 }
 
 message ArmPingRequest {}

@@ -16,12 +16,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.60"]
+dataset = ["lerobot>=0.5"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-openarm-gripette-model = { git = "https://github.com/pollen-robotics/openarm_gripette_model" }
-# For local development:
-# openarm-gripette-model = { path = "../openarm_gripette_model", editable = true }
+# openarm-gripette-model = { git = "https://github.com/pollen-robotics/openarm_gripette_model" }
+# Using local source until gripper frame is pushed:
+openarm-gripette-model = { path = "../openarm_gripette_model", editable = true }

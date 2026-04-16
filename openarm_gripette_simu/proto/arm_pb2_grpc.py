@@ -47,7 +47,12 @@ class ArmServiceStub(object):
         self.Reset = channel.unary_unary(
                 '/openarm.ArmService/Reset',
                 request_serializer=arm__pb2.ResetRequest.SerializeToString,
-                response_deserializer=arm__pb2.ArmCommandResponse.FromString,
+                response_deserializer=arm__pb2.ResetResponse.FromString,
+                _registered_method=True)
+        self.GetSuccessStatus = channel.unary_unary(
+                '/openarm.ArmService/GetSuccessStatus',
+                request_serializer=arm__pb2.SuccessStatusRequest.SerializeToString,
+                response_deserializer=arm__pb2.SuccessStatusResponse.FromString,
                 _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/openarm.ArmService/Ping',
@@ -74,7 +79,15 @@ class ArmServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Reset(self, request, context):
-        """Teleport the arm to a joint configuration (for episode resets)
+        """Reset the episode: teleport arm + randomize cube
+        If joint_positions is empty, arm start is randomized too
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSuccessStatus(self, request, context):
+        """Check if the current episode goal is achieved (cube touched)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -103,7 +116,12 @@ def add_ArmServiceServicer_to_server(servicer, server):
             'Reset': grpc.unary_unary_rpc_method_handler(
                     servicer.Reset,
                     request_deserializer=arm__pb2.ResetRequest.FromString,
-                    response_serializer=arm__pb2.ArmCommandResponse.SerializeToString,
+                    response_serializer=arm__pb2.ResetResponse.SerializeToString,
+            ),
+            'GetSuccessStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSuccessStatus,
+                    request_deserializer=arm__pb2.SuccessStatusRequest.FromString,
+                    response_serializer=arm__pb2.SuccessStatusResponse.SerializeToString,
             ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
@@ -191,7 +209,34 @@ class ArmService(object):
             target,
             '/openarm.ArmService/Reset',
             arm__pb2.ResetRequest.SerializeToString,
-            arm__pb2.ArmCommandResponse.FromString,
+            arm__pb2.ResetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSuccessStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openarm.ArmService/GetSuccessStatus',
+            arm__pb2.SuccessStatusRequest.SerializeToString,
+            arm__pb2.SuccessStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -19,8 +19,9 @@ ARM_JOINT_NAMES = [
     "r_wrist_pitch",
 ]
 
-# Target frame for IK
+# Frame names
 CAMERA_FRAME = "camera"
+GRIPPER_FRAME = "gripper"
 
 
 class Kinematics:
@@ -44,39 +45,47 @@ class Kinematics:
         # Regularization for solver stability
         self.solver.add_regularization_task(1e-4)
 
-        # Frame task for the camera (target is set later)
+        # Single frame task on camera (works reliably)
         self.robot.update_kinematics()
-        T_init = self.robot.get_T_world_frame(CAMERA_FRAME)
-        self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_init)
+        T_cam = self.robot.get_T_world_frame(CAMERA_FRAME)
+        self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_cam)
         self._frame_task.configure(CAMERA_FRAME, "soft", 1.0)
 
-    def forward(self, joint_positions: np.ndarray) -> np.ndarray:
-        """Compute the camera frame pose from arm joint positions.
+        # Fixed offset: gripper → camera (for converting gripper targets to camera targets)
+        T_grip = self.robot.get_T_world_frame(GRIPPER_FRAME)
+        self._T_grip_to_cam = np.linalg.inv(T_grip) @ T_cam
+
+    def forward(self, joint_positions: np.ndarray, frame: str = CAMERA_FRAME) -> np.ndarray:
+        """Compute a frame's pose from arm joint positions.
 
         Args:
             joint_positions: 7-element array of arm joint angles (rad).
+            frame: frame name to compute FK for (default: camera).
 
         Returns:
-            4x4 homogeneous transform (world -> camera).
+            4x4 homogeneous transform (world -> frame).
         """
         for i, name in enumerate(ARM_JOINT_NAMES):
             self.robot.set_joint(name, joint_positions[i])
         self.robot.update_kinematics()
-        return self.robot.get_T_world_frame(CAMERA_FRAME).copy()
+        return self.robot.get_T_world_frame(frame).copy()
 
     def inverse(
         self,
         target_pose: np.ndarray,
         current_joint_positions: np.ndarray | None = None,
         n_iter: int = 500,
+        frame: str = CAMERA_FRAME,
     ) -> np.ndarray:
-        """Solve IK for a target camera pose.
+        """Solve IK for a target pose of the given frame.
 
         Args:
-            target_pose: 4x4 homogeneous transform (world -> camera).
+            target_pose: 4x4 homogeneous transform (world -> frame).
             current_joint_positions: optional 7-element starting config.
                 If None, uses the robot's current state.
             n_iter: number of solver iterations.
+            frame: which frame to target ('camera' or 'gripper').
+                   Gripper targets are converted to camera targets internally.
 
         Returns:
             7-element array of arm joint angles (rad).
@@ -86,7 +95,13 @@ class Kinematics:
                 self.robot.set_joint(name, current_joint_positions[i])
             self.robot.update_kinematics()
 
-        self._frame_task.T_world_frame = target_pose
+        # Convert gripper target to camera target using fixed offset
+        if frame == GRIPPER_FRAME:
+            cam_target = target_pose @ self._T_grip_to_cam
+        else:
+            cam_target = target_pose
+
+        self._frame_task.T_world_frame = cam_target
 
         for _ in range(n_iter):
             self.solver.solve(True)
