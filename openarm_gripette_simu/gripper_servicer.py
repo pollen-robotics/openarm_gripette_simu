@@ -15,7 +15,7 @@ from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-STREAM_HZ = 10
+STREAM_HZ = 50  # matches real data FPS
 STREAM_INTERVAL = 1.0 / STREAM_HZ
 
 

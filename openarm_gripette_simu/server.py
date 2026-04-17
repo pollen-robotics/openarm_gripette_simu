@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 GRIPPER_PORT = 50051
 ARM_PORT = 50052
 VIEWER_FPS = 60
-CAMERA_FPS = 10  # camera rendering rate (matches real Gripette stream)
+CAMERA_FPS = 50  # camera rendering rate, matches real data (50fps)
 
 
 class SimulationServer:

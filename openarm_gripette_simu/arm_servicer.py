@@ -65,27 +65,43 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         self._target_pos = T[:3, 3].copy()
         self._target_r6d = rotation_matrix_to_6d(T[:3, :3]).copy()
 
+    def _cube_contacts_robot(self):
+        """Check if the cube is in contact with any robot geom."""
+        for i in range(self._sim.data.ncon):
+            c = self._sim.data.contact[i]
+            n1 = self._sim.model.geom(c.geom1).name
+            n2 = self._sim.model.geom(c.geom2).name
+            is_cube = "red_cube" in n1 or "red_cube" in n2
+            is_env = ("table" in n1 or "leg" in n1 or "floor" in n1 or
+                      "table" in n2 or "leg" in n2 or "floor" in n2)
+            if is_cube and not is_env:
+                return True
+        return False
+
     def _randomize_cube(self):
-        """Randomize cube position and orientation. Returns (x, y, z)."""
+        """Randomize cube position using MuJoCo collision detection to avoid robot contact."""
         cube_jnt_id = mujoco.mj_name2id(self._sim.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_joint")
         cube_qadr = self._sim.model.jnt_qposadr[cube_jnt_id]
-
-        cube_x = np.clip(
-            CUBE_NOMINAL_X + self._rng.uniform(-CUBE_X_NOISE, CUBE_X_NOISE),
-            TABLE_X_MIN + 0.02, TABLE_X_MAX - 0.02,
-        )
-        cube_y = np.clip(
-            CUBE_NOMINAL_Y + self._rng.uniform(-CUBE_Y_NOISE, CUBE_Y_NOISE),
-            TABLE_Y_MIN + 0.02, TABLE_Y_MAX - 0.02,
-        )
-        yaw = self._rng.uniform(-CUBE_YAW_NOISE, CUBE_YAW_NOISE)
-
-        self._sim.data.qpos[cube_qadr:cube_qadr + 3] = [cube_x, cube_y, CUBE_Z]
-        self._sim.data.qpos[cube_qadr + 3:cube_qadr + 7] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
-
-        # Zero cube velocity
         cube_dof_adr = self._sim.model.jnt_dofadr[cube_jnt_id]
-        self._sim.data.qvel[cube_dof_adr:cube_dof_adr + 6] = 0
+
+        while True:
+            cube_x = np.clip(
+                CUBE_NOMINAL_X + self._rng.uniform(-CUBE_X_NOISE, CUBE_X_NOISE),
+                TABLE_X_MIN + 0.02, TABLE_X_MAX - 0.02,
+            )
+            cube_y = np.clip(
+                CUBE_NOMINAL_Y + self._rng.uniform(-CUBE_Y_NOISE, CUBE_Y_NOISE),
+                TABLE_Y_MIN + 0.02, TABLE_Y_MAX - 0.02,
+            )
+            yaw = self._rng.uniform(-CUBE_YAW_NOISE, CUBE_YAW_NOISE)
+
+            self._sim.data.qpos[cube_qadr:cube_qadr + 3] = [cube_x, cube_y, CUBE_Z]
+            self._sim.data.qpos[cube_qadr + 3:cube_qadr + 7] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
+            self._sim.data.qvel[cube_dof_adr:cube_dof_adr + 6] = 0
+            mujoco.mj_forward(self._sim.model, self._sim.data)
+
+            if not self._cube_contacts_robot():
+                break
 
         self._cube_start_xy = np.array([cube_x, cube_y])
         return cube_x, cube_y, CUBE_Z

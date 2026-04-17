@@ -54,10 +54,10 @@ TABLE_X_MAX = 0.735
 TABLE_Y_MIN = -0.285
 TABLE_Y_MAX = 0.285
 
-# Timing
+# Timing — consistent with 50fps (20ms per frame)
 STEPS_REACH = 80       # steps to reach the cube
 STEPS_HOLD = 20        # steps holding at the cube
-SIM_SUBSTEPS = 5
+SIM_SUBSTEPS = 10      # 50fps → 20ms per frame → 10 steps at dt=0.002
 SETTLE_STEPS = 200
 
 
