@@ -17,6 +17,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.60"]
 dataset = ["lerobot>=0.5"]
+ros = ["rclpy"]  # provided by ROS2 Humble; install via apt, not pip
+
+[project.scripts]
+openarm-gripette-simu = "openarm_gripette_simu.__main__:main"
+openarm-gripette-real = "openarm_gripette_simu.real_server:main"
 
 [build-system]
 requires = ["hatchling"]
