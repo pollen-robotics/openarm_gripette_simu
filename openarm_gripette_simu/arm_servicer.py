@@ -20,7 +20,7 @@ from .proto import arm_pb2, arm_pb2_grpc
 logger = logging.getLogger(__name__)
 
 # Default arm start for randomized reset
-START_JOINTS = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
+START_JOINTS = np.array([0.0, 0.0, 0.0, 1.57, 0.0, 0.0, 0.0])
 
 # Cube nominal position (matches table_red_cube.xml)
 CUBE_NOMINAL_X = 0.40

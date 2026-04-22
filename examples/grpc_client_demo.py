@@ -3,7 +3,7 @@
 Usage:
     # First, start the server in another terminal:
     uv run python -m openarm_gripette_simu --scene scenes/table_red_cube.xml \
-        --initial-joints 0 0 0 -1.57 0 0 0
+        --initial-joints 0 0 0 1.57 0 0 0
 
     # Then run this client:
     uv run python examples/grpc_client_demo.py

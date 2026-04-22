@@ -28,7 +28,7 @@ def main():
     sim = Simulation()
     kin = Kinematics()
 
-    q_start = np.array([0.0, 0.0, 0.0, -1.57079632679, 0.0, 0.0, 0.0])
+    q_start = np.array([0.0, 0.0, 0.0, 1.57079632679, 0.0, 0.0, 0.0])
     T_center = kin.forward(q_start)
     center_pos = T_center[:3, 3].copy()
     print(f"Square center: {center_pos}")

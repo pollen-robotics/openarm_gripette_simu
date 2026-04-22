@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 SCENE = Path(__file__).parent.parent / "scenes" / "table_red_cube.xml"
 
 # Start config
-# START_JOINTS = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0])
-START_JOINTS = np.array([0.35, 0.0, 0.0, -1.81, 0.0, 0.0, 0.0])
+# START_JOINTS = np.array([0.0, 0.0, 0.0, 1.57, 0.0, 0.0, 0.0])
+START_JOINTS = np.array([-0.35, 0.0, 0.0, 1.81, 0.0, 0.0, 0.0])
 
 # Nominal cube position (matches table_red_cube.xml)
 CUBE_NOMINAL_X = 0.40

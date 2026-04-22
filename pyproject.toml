@@ -26,3 +26,8 @@ build-backend = "hatchling.build"
 # openarm-gripette-model = { git = "https://github.com/pollen-robotics/openarm_gripette_model" }
 # Using local source until gripper frame is pushed:
 openarm-gripette-model = { path = "../openarm_gripette_model", editable = true }
+
+# lerobot pulls opencv-python-headless which clobbers our opencv-python (same cv2 namespace).
+# Override to use the full opencv-python everywhere.
+[tool.uv]
+override-dependencies = ["opencv-python-headless ; sys_platform == 'never'"]

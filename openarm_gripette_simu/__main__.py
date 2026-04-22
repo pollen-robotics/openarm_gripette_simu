@@ -4,7 +4,7 @@ Usage:
     uv run python -m openarm_gripette_simu
     uv run python -m openarm_gripette_simu --scene scenes/table_red_cube.xml
     uv run python -m openarm_gripette_simu --headless
-    uv run python -m openarm_gripette_simu --initial-joints 1.0 0 0 -2.44 0 0 0
+    uv run python -m openarm_gripette_simu --initial-joints -1.0 0 0 2.44 0 0 0
 """
 
 import argparse
