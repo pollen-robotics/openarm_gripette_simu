@@ -72,12 +72,15 @@ class RealArmInterface(Node):
         return False
 
     def get_arm_positions(self) -> np.ndarray:
+        # Negate: hardware positive rotation = local -Z (ros2_control URDF uses axis 0 0 -1),
+        # but Placo model uses axis 0 0 1, so the sign conventions are opposite.
         with self._lock:
-            return self._positions.copy()
+            return -self._positions.copy()
 
     def set_arm_commands(self, joints: np.ndarray):
+        # Negate back: IK returns joints in Placo convention (axis 0 0 1).
         msg = Float64MultiArray()
-        msg.data = joints.tolist()
+        msg.data = (-joints).tolist()
         self._pub.publish(msg)
 
     def reset_arm(self, joints: np.ndarray):
