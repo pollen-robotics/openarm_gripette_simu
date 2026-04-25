@@ -136,9 +136,17 @@ class Simulation:
         """Launch the interactive MuJoCo viewer (blocking)."""
         mujoco.viewer.launch(self.model, self.data)
 
-    def launch_passive_viewer(self):
+    def launch_passive_viewer(self, show_left_ui: bool = False, show_right_ui: bool = False):
         """Launch a passive MuJoCo viewer (non-blocking).
+
+        Side panels are hidden by default — most scripted demos don't need
+        them and the extra screen real estate is more useful. Pass
+        `show_left_ui=True` / `show_right_ui=True` to restore them.
 
         Returns the viewer handle. Call viewer.sync() after each step.
         """
-        return mujoco.viewer.launch_passive(self.model, self.data)
+        return mujoco.viewer.launch_passive(
+            self.model, self.data,
+            show_left_ui=show_left_ui,
+            show_right_ui=show_right_ui,
+        )

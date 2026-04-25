@@ -1,5 +1,5 @@
 <mujoco model="table_grasp">
-    <option cone="elliptic" impratio="10" />
+    <option cone="elliptic" impratio="10" timestep="0.001" iterations="100" noslip_iterations="3" />
     <default>
         <geom friction="2.0 0.005 0.001" />
     </default>
@@ -48,7 +48,7 @@
             <freejoint name="red_cube_joint" />
             <geom name="red_cube" type="box" size="0.02 0.02 0.06"
                 material="red_cube" mass="0.1"
-                friction="2.0 0.005 0.001" condim="6"
+                friction="1.0 0.1 0.005" condim="6"
                 solref="0.005 1" solimp="0.99 0.99 0.001" />
         </body>
     </worldbody>
