@@ -8,3 +8,4 @@ from .ik_feasibility import (
     TrajectoryFeasibility,
     RejectionSamplingStats,
 )
+from .domain_randomization import DRConfig, randomize_scene
