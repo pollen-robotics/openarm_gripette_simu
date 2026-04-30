@@ -69,6 +69,20 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
 
     def SendMotorCommand(self, request, context):
         try:
+            # During the post-reset grace period the server holds the gripper
+            # open regardless of incoming commands. Without this, the eval
+            # client's policy — which can't predict a closed→open transition
+            # because the training data never showed one — keeps streaming
+            # closed commands and the gripper snaps shut milliseconds after
+            # a manual reset. The grace period ends after a fixed duration,
+            # by which time the policy queue has rolled forward through
+            # observations of the new home pose.
+            hold_until = getattr(self._server, "_gripper_hold_open_until", 0.0)
+            if time.monotonic() < hold_until:
+                with self._lock:
+                    self._sim.set_joint_commands(np.array([0.0, 0.0]),
+                                                  ["proximal", "distal"])
+                return gripper_pb2.MotorCommandResponse(success=True)
             with self._lock:
                 self._sim.set_joint_commands(
                     np.array([request.motor1_goal, request.motor2_goal]),

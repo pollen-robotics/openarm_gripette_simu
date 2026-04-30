@@ -38,6 +38,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+from tqdm import tqdm
 
 # Make sibling helper module importable when running as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -86,6 +87,8 @@ SCENE = Path(__file__).parent.parent / "scenes" / "grabette_grasp.xml"
 FPS = 50
 SIM_SUBSTEPS = 20  # 20 ms per frame at sim dt=0.001
 FRAMES_INITIAL_SETTLE = 5
+FRAMES_OPEN_RAMP = 15            # release-episode: ramp closed -> open
+FRAMES_HOVER = 50                # hover-episode: extra time at grasp pose with gripper still open
 FRAMES_APPROACH = 80
 # Stage 5e: slowed contact-critical phases. Arm replay shows the kinematic
 # motion is correct but contact transients on close/lift kick the cube out
@@ -277,6 +280,28 @@ def phase_hold(sim: Simulation, mocap_id: int,
             viewer.sync()
 
 
+def phase_open(sim: Simulation, mocap_id: int,
+               pos: np.ndarray, quat: np.ndarray,
+               n_frames: int, prox_id: int, dist_id: int,
+               frames: list[dict], viewer=None):
+    """Ramp gripper ctrl from CLOSED to OPEN while holding the mocap fixed.
+
+    Mirror of phase_close — used in 'release' episodes that start with the
+    gripper closed and open it before approach. Gives the trained policy
+    examples of closed→open transitions, which it otherwise never sees."""
+    for i in range(n_frames):
+        t = (i + 1) / n_frames
+        record_frame(sim, mocap_id, frames)
+        sim.data.mocap_pos[mocap_id] = pos
+        sim.data.mocap_quat[mocap_id] = quat
+        sim.data.ctrl[prox_id] = (1.0 - t) * PROXIMAL_CLOSED + t * PROXIMAL_OPEN
+        sim.data.ctrl[dist_id] = (1.0 - t) * DISTAL_CLOSED + t * DISTAL_OPEN
+        for _ in range(SIM_SUBSTEPS):
+            sim.step()
+        if viewer is not None:
+            viewer.sync()
+
+
 def phase_close(sim: Simulation, mocap_id: int,
                 pos: np.ndarray, quat: np.ndarray,
                 n_frames: int, prox_id: int, dist_id: int,
@@ -334,16 +359,27 @@ def plan_episode(
 
 def run_episode(scene_xml: Path, wp: EpisodeWaypoints, use_viewer: bool = False,
                 dr_cfg: DRConfig | None = None,
-                dr_rng: np.random.Generator | None = None):
-    """Run a single grasp-and-lift episode using the supplied plan.
+                dr_rng: np.random.Generator | None = None,
+                episode_type: str = "normal"):
+    """Run a single grasp episode using the supplied plan.
 
-    The plan supplies all keyframe poses; this function just drives MuJoCo.
-    If ``dr_cfg`` is provided, visual nuisance randomization is applied once
-    (after Simulation init, before the first step) using ``dr_rng``. Each
-    Simulation call reloads the model from XML, so the DR is per-episode.
+    Episode types control what the dataset teaches the policy:
+      * "normal"  — full grasp-and-lift trajectory (the default).
+      * "release" — gripper starts CLOSED at home; first phase ramps it open,
+        then proceeds with the normal grasp. Gives the model closed→open
+        transition examples it would otherwise never see in training.
+      * "hover"   — approach + descend as usual, then HOLD at grasp pose
+        with the gripper STILL OPEN for `FRAMES_HOVER` frames, then retract.
+        No close, no lift. Negative example: "near cube + gripper open
+        does NOT mean close yet".
+
+    Success criteria differ:
+      * normal/release: cube lifted >= LIFT_SUCCESS_THRESHOLD above start.
+      * hover:          cube did NOT move significantly (no accidental nudge).
 
     Returns (frames, success, cube_start_xy, home_xyz, grasp_dbg, cube_final_z).
     """
+    assert episode_type in ("normal", "release", "hover"), episode_type
     sim = Simulation(scene_xml=scene_xml)
     if dr_cfg is not None:
         randomize_scene(sim.model, dr_rng, dr_cfg)
@@ -366,17 +402,32 @@ def run_episode(scene_xml: Path, wp: EpisodeWaypoints, use_viewer: bool = False,
     grasp_xyz, grasp_quat = wp.grasp_xyz, wp.grasp_quat
     grasp_dbg = wp.grasp_dbg
 
-    # 4. Reset Grabette to home and open the gripper.
+    # 4. Reset Grabette to home. Initial gripper state depends on episode type.
     set_grabette_pose(sim, mocap_id, home_xyz, home_quat)
-    sim.data.ctrl[prox_id] = PROXIMAL_OPEN
-    sim.data.ctrl[dist_id] = DISTAL_OPEN
+    if episode_type == "release":
+        # Release episodes start CLOSED so the policy sees closed→open.
+        sim.data.ctrl[prox_id] = PROXIMAL_CLOSED
+        sim.data.ctrl[dist_id] = DISTAL_CLOSED
+        sim.data.joint("proximal").qpos[0] = PROXIMAL_CLOSED
+        sim.data.joint("distal").qpos[0] = DISTAL_CLOSED
+        mujoco.mj_forward(sim.model, sim.data)
+        initial_ctrl = (PROXIMAL_CLOSED, DISTAL_CLOSED)
+    else:
+        sim.data.ctrl[prox_id] = PROXIMAL_OPEN
+        sim.data.ctrl[dist_id] = DISTAL_OPEN
+        initial_ctrl = (PROXIMAL_OPEN, DISTAL_OPEN)
 
     frames: list[dict] = []
 
     # 5. Initial settle so the weld stabilizes at home.
     phase_hold(sim, mocap_id, home_xyz, home_quat,
-               FRAMES_INITIAL_SETTLE, (PROXIMAL_OPEN, DISTAL_OPEN),
+               FRAMES_INITIAL_SETTLE, initial_ctrl,
                prox_id, dist_id, frames, viewer)
+
+    # 5b. Release-only: ramp gripper closed -> open before approach.
+    if episode_type == "release":
+        phase_open(sim, mocap_id, home_xyz, home_quat,
+                   FRAMES_OPEN_RAMP, prox_id, dist_id, frames, viewer)
 
     # Cube starting position after the settle (for the success check).
     cube_pos_start = sim.data.body("red_cube").xpos.copy()
@@ -403,10 +454,45 @@ def run_episode(scene_xml: Path, wp: EpisodeWaypoints, use_viewer: bool = False,
                  FRAMES_DESCEND, (PROXIMAL_OPEN, DISTAL_OPEN),
                  prox_id, dist_id, frames, viewer)
 
-    # 8. Pre-grip settle so the weld converges before closing.
+    # 8. Pre-grip settle so the weld converges before closing/hovering.
     phase_hold(sim, mocap_id, grasp_xyz, grasp_quat,
                FRAMES_PRE_GRIP_SETTLE, (PROXIMAL_OPEN, DISTAL_OPEN),
                prox_id, dist_id, frames, viewer)
+
+    if episode_type == "hover":
+        # 8b. HOVER: stay at grasp pose with the gripper STILL OPEN.
+        # Negative example to teach the policy that proximity to cube is
+        # not the same as "close gripper now".
+        phase_hold(sim, mocap_id, grasp_xyz, grasp_quat,
+                   FRAMES_HOVER, (PROXIMAL_OPEN, DISTAL_OPEN),
+                   prox_id, dist_id, frames, viewer)
+
+        # 8c. Retract back to home, gripper still open.
+        retract_target = home_xyz + np.array([0.0, 0.0, RETRACT_EXTRA])
+        phase_smooth(sim, mocap_id,
+                     grasp_xyz, grasp_quat, retract_target, home_quat,
+                     FRAMES_RETRACT, (PROXIMAL_OPEN, DISTAL_OPEN),
+                     prox_id, dist_id, frames, viewer)
+
+        # 8d. Final settle (still open).
+        phase_hold(sim, mocap_id, retract_target, home_quat,
+                   FRAMES_FINAL_SETTLE, (PROXIMAL_OPEN, DISTAL_OPEN),
+                   prox_id, dist_id, frames, viewer)
+
+        cube_final = sim.data.body("red_cube").xpos.copy()
+        # Hover success: cube was NOT disturbed. We don't want to teach the
+        # model that hovering is OK if the gripper accidentally pushed the
+        # cube during the approach.
+        cube_drift_m = float(np.linalg.norm(cube_final - cube_pos_start))
+        success = cube_drift_m < 0.02
+
+        if viewer is not None:
+            viewer.close()
+        return (frames, success,
+                (float(cube_pos_start[0]), float(cube_pos_start[1])),
+                tuple(home_xyz.tolist()),
+                grasp_dbg,
+                float(cube_final[2]))
 
     # 9. Close the gripper (ramp ctrl, mocap fixed).
     phase_close(sim, mocap_id, grasp_xyz, grasp_quat,
@@ -488,8 +574,26 @@ def main():
                          "so the cost is small (~5ms per fail).")
     ik.add_argument("--ik_pos_tol", type=float, default=0.015,
                     help="Per-frame position tolerance in metres (default 1.5cm).")
-    ik.add_argument("--ik_rot_tol_deg", type=float, default=5.0,
-                    help="Per-frame rotation tolerance in degrees (default 5.0).")
+    ik.add_argument("--ik_rot_tol_deg", type=float, default=30.0,
+                    help="Per-frame rotation tolerance in degrees. The IK is "
+                         "weighted to prioritise position (Placo position task "
+                         "100x orientation task), so we record whatever "
+                         "orientation the arm achieves at the right position. "
+                         "Default 30° is loose enough that 70% of trajectories "
+                         "pass the filter while keeping pose realistic.")
+
+    # Episode-type mix: standard grasp + a few release / hover episodes.
+    et = parser.add_argument_group("Episode types (for diversity beyond grasp-only)")
+    et.add_argument("--release_fraction", type=float, default=0.15,
+                    help="Fraction of episodes that start with the gripper "
+                         "CLOSED and ramp it open before approach. Teaches the "
+                         "policy closed→open transitions it would otherwise "
+                         "never see in a grasp-only dataset. Default 0.15.")
+    et.add_argument("--hover_fraction", type=float, default=0.15,
+                    help="Fraction of episodes that approach the cube and "
+                         "HOVER with gripper still open instead of grasping. "
+                         "Negative example: 'near cube + open gripper does NOT "
+                         "mean close yet'. Default 0.15.")
 
     # Visual domain randomization (nuisance variation only — same red cube,
     # no distractors, no semantic change to the task).
@@ -590,8 +694,36 @@ def main():
           f"{'home_x':>7} {'home_y':>7} {'home_z':>7} "
           f"{'g_pitch':>7} {'g_azim':>7} "
           f"{'final_z':>9} {'frames':>7} {'ik_try':>6} {'dt_s':>6} {'result':>7}")
-    for ep in range(args.episodes):
+    # Episode-type sampler (deterministic given args.seed via a separate rng).
+    type_rng = np.random.default_rng(args.seed + 20_000)
+    p_release = float(args.release_fraction)
+    p_hover = float(args.hover_fraction)
+    p_normal = max(0.0, 1.0 - p_release - p_hover)
+    type_counts = {"normal": 0, "release": 0, "hover": 0}
+    type_success = {"normal": 0, "release": 0, "hover": 0}
+    logger.info(
+        f"Episode-type mix: normal={p_normal:.2f}, release={p_release:.2f}, hover={p_hover:.2f}"
+    )
+
+    pbar = tqdm(
+        range(args.episodes),
+        desc="episodes",
+        unit="ep",
+        smoothing=0.1,
+        dynamic_ncols=True,
+    )
+    for ep in pbar:
         t0 = time.perf_counter()
+
+        # Choose this episode's type from the mix.
+        u = type_rng.random()
+        if u < p_release:
+            episode_type = "release"
+        elif u < p_release + p_hover:
+            episode_type = "hover"
+        else:
+            episode_type = "normal"
+        type_counts[episode_type] += 1
 
         # Plan an episode (with optional IK rejection sampling).
         wp, ik_stats = plan_episode(
@@ -608,24 +740,29 @@ def main():
             # Filter exhausted — skip this episode.
             n_ik_dropped += 1
             dt = time.perf_counter() - t0
-            print(f"{ep:4d} {'-':>8} {'-':>8} {'-':>7} {'-':>7} {'-':>7} "
-                  f"{'-':>7} {'-':>7} {'-':>9} {'-':>7} {ik_try:6d} {dt:6.1f} "
-                  f"{'IK_FAIL':>7}")
+            tqdm.write(f"{ep:4d} {'-':>8} {'-':>8} {'-':>7} {'-':>7} {'-':>7} "
+                       f"{'-':>7} {'-':>7} {'-':>9} {'-':>7} {ik_try:6d} {dt:6.1f} "
+                       f"{'IK_FAIL':>7}")
+            pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, refresh=False)
             continue
 
         frames, success, (cx, cy), home_xyz, grasp_dbg, final_z = run_episode(
             SCENE, wp, use_viewer=args.viewer, dr_cfg=dr_cfg, dr_rng=dr_rng,
+            episode_type=episode_type,
         )
         dt = time.perf_counter() - t0
 
-        result = "OK" if success else "FAIL"
-        print(f"{ep:4d} {cx:8.3f} {cy:8.3f} "
-              f"{home_xyz[0]:7.3f} {home_xyz[1]:7.3f} {home_xyz[2]:7.3f} "
-              f"{grasp_dbg['grasp_pitch_deg']:7.1f} {grasp_dbg['grasp_azimuth_deg']:7.1f} "
-              f"{final_z:9.4f} {len(frames):7d} {ik_try:6d} {dt:6.1f} {result:>7}")
+        if success:
+            type_success[episode_type] += 1
+        result = ("OK" if success else "FAIL") + f"[{episode_type[0]}]"
+        tqdm.write(f"{ep:4d} {cx:8.3f} {cy:8.3f} "
+                   f"{home_xyz[0]:7.3f} {home_xyz[1]:7.3f} {home_xyz[2]:7.3f} "
+                   f"{grasp_dbg['grasp_pitch_deg']:7.1f} {grasp_dbg['grasp_azimuth_deg']:7.1f} "
+                   f"{final_z:9.4f} {len(frames):7d} {ik_try:6d} {dt:6.1f} {result:>7}")
 
         # Discard failures: never call add_frame for them.
         if not success:
+            pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, refresh=False)
             continue
 
         actions = frames_to_actions_8d(frames)
@@ -639,7 +776,9 @@ def main():
         n_saved += 1
         n_success += 1
         saved_frame_counts.append(len(frames))
+        pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, refresh=False)
 
+    pbar.close()
     dataset.finalize()
 
     rate = 100.0 * n_success / args.episodes if args.episodes else 0.0
@@ -649,6 +788,12 @@ def main():
         f"({n_success} success, {rate:.1f}%). "
         f"Avg frames per saved episode: {avg_frames:.1f}. "
         f"Dataset root: {dataset.root}")
+    logger.info(
+        "Per-type breakdown (success/total): "
+        f"normal={type_success['normal']}/{type_counts['normal']}, "
+        f"release={type_success['release']}/{type_counts['release']}, "
+        f"hover={type_success['hover']}/{type_counts['hover']}"
+    )
     if checker is not None:
         n_planned = args.episodes - n_ik_dropped
         # Avg attempts on the accepted episodes only (dropped episodes always

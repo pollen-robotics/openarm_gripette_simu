@@ -45,12 +45,19 @@ CUBE_MOVED_THRESHOLD = 0.005
 
 class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
-    def __init__(self, sim, kin: Kinematics, lock: threading.Lock, start_time: float):
+    def __init__(self, sim, kin: Kinematics, lock: threading.Lock, start_time: float,
+                 server=None):
         self._sim = sim
         self._kin = kin
         self._lock = lock
         self._start_time = start_time
         self._rng = np.random.default_rng()
+        # Optional back-reference to the SimulationServer. If set, the Reset
+        # RPC can delegate to server.reset_episode_random() which samples a
+        # cube position + arm home pose from the SAME training distribution
+        # the dataset used. Falls back to the legacy local-noise reset if
+        # not provided (so tests that construct ArmServicer alone keep working).
+        self._server = server
 
         # Cube initial position for success tracking (set on reset)
         self._cube_start_xy = np.array([CUBE_NOMINAL_X, CUBE_NOMINAL_Y])
@@ -160,13 +167,34 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         )
 
     def Reset(self, request, context):
-        """Reset the episode: teleport arm + randomize cube."""
+        """Reset the episode: teleport arm + randomize cube.
+
+        If a server reference is available AND the request doesn't pin the
+        joint positions, sample a cube + home pose from the SAME training
+        distribution the dataset was generated with. Otherwise fall back to
+        the legacy local-noise reset around START_JOINTS.
+        """
         try:
+            # Preferred path: training-distribution random reset (matches
+            # collect_grasp_dataset.py exactly).
+            if self._server is not None and len(request.joint_positions) != 7:
+                result = self._server.reset_episode_random()
+                if result is None:
+                    return arm_pb2.ResetResponse(
+                        success=False,
+                        error="reset_episode_random failed to find a feasible home pose",
+                    )
+                cx, cy, cz = result
+                self._cube_start_xy = np.array([cx, cy])
+                logger.info(f"Reset (training-dist): cube=[{cx:.3f}, {cy:.3f}]")
+                return arm_pb2.ResetResponse(success=True, cube_x=cx, cube_y=cy, cube_z=cz)
+
+            # Legacy path: cube via local noise around CUBE_NOMINAL, arm via
+            # local noise around START_JOINTS. Used when no server reference,
+            # or when the caller pins joints explicitly.
             with self._lock:
-                # Randomize cube
                 cx, cy, cz = self._randomize_cube()
 
-                # Arm: use provided joints or randomize
                 if len(request.joint_positions) == 7:
                     joints = np.array(request.joint_positions)
                 else:
@@ -179,7 +207,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 mujoco.mj_forward(self._sim.model, self._sim.data)
                 self._sync_target_from_sim()
 
-            logger.info(f"Reset: arm={joints.round(3).tolist()}, cube=[{cx:.3f}, {cy:.3f}]")
+            logger.info(f"Reset (legacy): arm={joints.round(3).tolist()}, cube=[{cx:.3f}, {cy:.3f}]")
             return arm_pb2.ResetResponse(
                 success=True, cube_x=cx, cube_y=cy, cube_z=cz,
             )

@@ -114,9 +114,22 @@ SENTRY_OFFSET = 0.10      # 10 cm back along approach axis
 # These bounds come from a 5000-sample search against the corrected IK; the
 # IK filter still acts as a final guard, so they're loose-enough to keep
 # diversity but tight-enough to give >=10% IK-filter acceptance.
-HOME_X_OFFSET_RANGE = (-0.20, 0.0)       # 0-20 cm "in front of" the cube
-HOME_Y_OFFSET_RANGE = (-0.25, +0.05)     # mostly -y side; arm reaches that side better
-HOME_Z_ABOVE_TABLE_RANGE = (0.05, 0.30)  # 0.40-0.65 m world Z
+#
+# CRITICAL: these bounds enforce *separation* from the cube. Pre-Stage-5e
+# bounds were derived purely from arm IK feasibility and admitted home
+# poses where the gripper sits essentially on the cube (home_x_offset=0,
+# home_z=5cm above table). A non-trivial fraction of training episodes
+# starting at the cube taught the policy to predict "close + lift" from
+# any open-gripper start, regardless of cube position.
+#
+# The arm's reachable envelope unfortunately doesn't allow much separation
+# (the workspace is roughly a 15 cm radius around the cube), so we settle
+# for ~5 cm minimum horizontal offset + 10 cm minimum above-table — enough
+# that every training episode shows a clear approach motion in the
+# recorded video, while keeping IK-filter acceptance usable.
+HOME_X_OFFSET_RANGE = (-0.20, -0.05)     # 5-20 cm behind the cube in -X
+HOME_Y_OFFSET_RANGE = (-0.25, -0.05)     # 5-25 cm in -Y from the cube
+HOME_Z_ABOVE_TABLE_RANGE = (0.30, 0.40)  # 0.65-0.75 m world Z. Stage-5g: dropped the 0.40-0.45 upper slice — at home_z ≥ 0.42 the arm operates near joint limits and the policy's residual orientation error during descend is large enough to miss grasps. v4 eval failures clustered there. Visible diversity loss is small; stability gain matters.
 
 # Orientation: gripper finger axis tilted forward-down at this pitch below
 # horizontal. Pitch=90 deg -> straight down. Steep angles only.
@@ -391,7 +404,7 @@ def sentry_pose(grasp_xyz: np.ndarray, grasp_quat: np.ndarray,
 
 def mid_approach_pose(home_xyz: np.ndarray, home_quat: np.ndarray,
                        above_grasp: np.ndarray, grasp_quat: np.ndarray,
-                       arc_lift: float = 0.05):
+                       arc_lift: float = 0.0):
     """Build a mid-waypoint between home and pre-grasp for a curved approach.
 
     Position: midpoint of home and above_grasp, with z bumped UP so the
@@ -496,7 +509,7 @@ def sample_episode_waypoints(
     cube_x_range: tuple[float, float] = CUBE_X_RANGE,
     cube_y_range: tuple[float, float] = CUBE_Y_RANGE,
     lift_height: float = LIFT_HEIGHT,
-    arc_lift: float = 0.05,
+    arc_lift: float = 0.0,
     sentry_offset: float = SENTRY_OFFSET,
     tilt_range_deg: tuple[float, float] = GRASP_TILT_RANGE_DEG,
     azimuth_range_deg: tuple[float, float] = GRASP_AZIMUTH_RANGE_DEG,
