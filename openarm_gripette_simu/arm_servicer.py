@@ -132,21 +132,49 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 )
 
             with self._lock:
-                self._target_pos = self._target_pos + delta_pos
-                self._target_r6d = self._target_r6d + delta_r6d
+                # Camera-LOCAL frame deltas (Stage-6 convention) applied to
+                # the INTEGRATOR target, not to the FK-current pose. The
+                # incoming (dx, dy, dz) is a position offset expressed in
+                # the integrator's current rotation basis, and (dr6d) is
+                # the 6D form of R_delta such that
+                #
+                #     R_target_next = R_target_now @ R_delta
+                #     pos_target_next = pos_target_now + R_target_now @ delta_pos
+                #
+                # Applying the delta to the INTEGRATOR (the cumulative
+                # commanded pose) and NOT to the FK-current pose is
+                # essential when the IK can leave orientation error in
+                # the actual arm pose. Our Placo solver is configured
+                # with position weight 100x orientation weight (to keep
+                # position accurate), so the actual FK rotation can be up
+                # to 30° off the commanded rotation. If we applied
+                # local-frame deltas through that drifted FK rotation,
+                # the position delta direction would also drift — the
+                # arm would consistently miss the target by a slowly
+                # accumulating error in the +/-X+/-Y plane. The integrator
+                # is self-consistent with the dataset's trajectory by
+                # construction (it reproduces pose[t+1] = pose[t] + apply(delta_t)
+                # exactly given pose[0]), so the arm just has to track the
+                # integrator without affecting subsequent commands.
+                R_target = rotation_6d_to_matrix(self._target_r6d)
 
-                target_rot = rotation_6d_to_matrix(self._target_r6d)
+                # Position: target_pos += R_target @ delta_local
+                delta_pos_world = R_target @ delta_pos
+                self._target_pos = self._target_pos + delta_pos_world
+
+                # Rotation: R_target_new = R_target @ R_delta_local
+                R_delta = rotation_6d_to_matrix(delta_r6d)
+                R_target_new = R_target @ R_delta
+                self._target_r6d = rotation_matrix_to_6d(R_target_new).copy()
+
+                # IK to the new integrator target.
                 T_target = np.eye(4)
-                T_target[:3, :3] = target_rot
+                T_target[:3, :3] = R_target_new
                 T_target[:3, 3] = self._target_pos
 
                 arm_joints = self._sim.get_arm_positions()
                 target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints)
                 self._sim.set_arm_commands(target_joints)
-
-                T_achieved = self._kin.forward(target_joints)
-                self._target_pos = T_achieved[:3, 3].copy()
-                self._target_r6d = rotation_matrix_to_6d(T_achieved[:3, :3]).copy()
 
             return arm_pb2.ArmCommandResponse(success=True)
 
