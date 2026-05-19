@@ -85,9 +85,25 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 return True
         return False
 
+    def _has_cube(self) -> bool:
+        """Return True iff the loaded scene has a `red_cube_joint`."""
+        return mujoco.mj_name2id(
+            self._sim.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_joint"
+        ) >= 0
+
     def _randomize_cube(self):
         """Randomize cube position using MuJoCo collision detection to avoid robot contact."""
         cube_jnt_id = mujoco.mj_name2id(self._sim.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_joint")
+        if cube_jnt_id < 0:
+            # No cube in this scene — nothing to randomize. Keep cube_start_xy
+            # at whatever nominal value it was initialized to so GetSuccessStatus
+            # doesn't crash on a missing body lookup either.
+            logger.info("Scene has no `red_cube_joint`; skipping cube randomization.")
+            return (
+                float(self._cube_start_xy[0]),
+                float(self._cube_start_xy[1]),
+                CUBE_Z,
+            )
         cube_qadr = self._sim.model.jnt_qposadr[cube_jnt_id]
         cube_dof_adr = self._sim.model.jnt_dofadr[cube_jnt_id]
 
@@ -244,8 +260,16 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
             return arm_pb2.ResetResponse(success=False, error=str(e))
 
     def GetSuccessStatus(self, request, context):
-        """Check if the cube was touched (moved from its initial position)."""
+        """Check if the cube was touched (moved from its initial position).
+
+        Returns goal_reached=False / displacement=0 if the scene has no cube.
+        """
         with self._lock:
+            if not self._has_cube():
+                return arm_pb2.SuccessStatusResponse(
+                    goal_reached=False,
+                    cube_displacement=0.0,
+                )
             cube_xy = self._sim.data.body("red_cube").xpos[:2].copy()
 
         displacement = float(np.linalg.norm(cube_xy - self._cube_start_xy))
