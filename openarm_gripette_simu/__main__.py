@@ -24,6 +24,15 @@ def main():
         metavar="RAD",
         help="Initial arm joint positions (7 values in rad)",
     )
+    parser.add_argument(
+        "--gripper-hold-open-duration", type=float, default=0.0,
+        help="Seconds after a reset (keyboard or RPC) during which incoming "
+             "gripper commands are ignored and the gripper is forced open. "
+             "Originally needed because the v3 model couldn't predict "
+             "closed→open transitions; the v4 (release+hover) model can, so "
+             "the default is now 0 (no override). Bump to 1.5 if you ever "
+             "train a model again that gets stuck closed after a reset.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -31,6 +40,7 @@ def main():
     server = SimulationServer(
         scene_xml=args.scene,
         initial_arm_joints=args.initial_joints,
+        gripper_hold_open_duration=args.gripper_hold_open_duration,
     )
     server.run(
         gripper_port=args.gripper_port,

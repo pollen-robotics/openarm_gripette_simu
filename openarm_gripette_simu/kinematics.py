@@ -27,7 +27,18 @@ GRIPPER_FRAME = "gripper"
 class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
 
-    def __init__(self, model_dir=None):
+    def __init__(self, model_dir=None, position_weight: float = 100.0,
+                 orientation_weight: float = 1.0):
+        """
+        Args:
+            model_dir: URDF dir (defaults to OPENARM_RIGHT_DIR).
+            position_weight, orientation_weight: Placo frame-task weights
+                (default 100:1). Higher orientation_weight (e.g. 10) locks
+                rotation more strictly at the cost of position accuracy —
+                useful on real hardware where the kinematic chain is close
+                to a wrist-roll singularity at the typical home pose and
+                position-only priority leaks rotation into the wrist joints.
+        """
         model_dir = str(model_dir) if model_dir else str(OPENARM_RIGHT_DIR)
         self.robot = placo.RobotWrapper(model_dir)
 
@@ -45,11 +56,17 @@ class Kinematics:
         # Regularization for solver stability
         self.solver.add_regularization_task(1e-4)
 
-        # Single frame task on camera (works reliably)
+        # Frame task on camera, with position weighted 100x higher than
+        # orientation. Equal weighting (the previous default) caused the QP
+        # to compromise — landing 30-200 mm off the position to better
+        # match an orientation we may not actually reach. With position
+        # priority, the solver nails position first and accepts whatever
+        # orientation is achievable. Placo's FrameTask.configure takes
+        # (name, type, position_weight, orientation_weight).
         self.robot.update_kinematics()
         T_cam = self.robot.get_T_world_frame(CAMERA_FRAME)
         self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_cam)
-        self._frame_task.configure(CAMERA_FRAME, "soft", 1.0)
+        self._frame_task.configure(CAMERA_FRAME, "soft", position_weight, orientation_weight)
 
         # Fixed offset: gripper → camera (for converting gripper targets to camera targets)
         T_grip = self.robot.get_T_world_frame(GRIPPER_FRAME)

@@ -45,12 +45,19 @@ CUBE_MOVED_THRESHOLD = 0.005
 
 class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
-    def __init__(self, sim, kin: Kinematics, lock: threading.Lock, start_time: float):
+    def __init__(self, sim, kin: Kinematics, lock: threading.Lock, start_time: float,
+                 server=None):
         self._sim = sim
         self._kin = kin
         self._lock = lock
         self._start_time = start_time
         self._rng = np.random.default_rng()
+        # Optional back-reference to the SimulationServer. If set, the Reset
+        # RPC can delegate to server.reset_episode_random() which samples a
+        # cube position + arm home pose from the SAME training distribution
+        # the dataset used. Falls back to the legacy local-noise reset if
+        # not provided (so tests that construct ArmServicer alone keep working).
+        self._server = server
 
         # Cube initial position for success tracking (set on reset)
         self._cube_start_xy = np.array([CUBE_NOMINAL_X, CUBE_NOMINAL_Y])
@@ -78,9 +85,25 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 return True
         return False
 
+    def _has_cube(self) -> bool:
+        """Return True iff the loaded scene has a `red_cube_joint`."""
+        return mujoco.mj_name2id(
+            self._sim.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_joint"
+        ) >= 0
+
     def _randomize_cube(self):
         """Randomize cube position using MuJoCo collision detection to avoid robot contact."""
         cube_jnt_id = mujoco.mj_name2id(self._sim.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_joint")
+        if cube_jnt_id < 0:
+            # No cube in this scene — nothing to randomize. Keep cube_start_xy
+            # at whatever nominal value it was initialized to so GetSuccessStatus
+            # doesn't crash on a missing body lookup either.
+            logger.info("Scene has no `red_cube_joint`; skipping cube randomization.")
+            return (
+                float(self._cube_start_xy[0]),
+                float(self._cube_start_xy[1]),
+                CUBE_Z,
+            )
         cube_qadr = self._sim.model.jnt_qposadr[cube_jnt_id]
         cube_dof_adr = self._sim.model.jnt_dofadr[cube_jnt_id]
 
@@ -125,21 +148,49 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 )
 
             with self._lock:
-                self._target_pos = self._target_pos + delta_pos
-                self._target_r6d = self._target_r6d + delta_r6d
+                # Camera-LOCAL frame deltas (Stage-6 convention) applied to
+                # the INTEGRATOR target, not to the FK-current pose. The
+                # incoming (dx, dy, dz) is a position offset expressed in
+                # the integrator's current rotation basis, and (dr6d) is
+                # the 6D form of R_delta such that
+                #
+                #     R_target_next = R_target_now @ R_delta
+                #     pos_target_next = pos_target_now + R_target_now @ delta_pos
+                #
+                # Applying the delta to the INTEGRATOR (the cumulative
+                # commanded pose) and NOT to the FK-current pose is
+                # essential when the IK can leave orientation error in
+                # the actual arm pose. Our Placo solver is configured
+                # with position weight 100x orientation weight (to keep
+                # position accurate), so the actual FK rotation can be up
+                # to 30° off the commanded rotation. If we applied
+                # local-frame deltas through that drifted FK rotation,
+                # the position delta direction would also drift — the
+                # arm would consistently miss the target by a slowly
+                # accumulating error in the +/-X+/-Y plane. The integrator
+                # is self-consistent with the dataset's trajectory by
+                # construction (it reproduces pose[t+1] = pose[t] + apply(delta_t)
+                # exactly given pose[0]), so the arm just has to track the
+                # integrator without affecting subsequent commands.
+                R_target = rotation_6d_to_matrix(self._target_r6d)
 
-                target_rot = rotation_6d_to_matrix(self._target_r6d)
+                # Position: target_pos += R_target @ delta_local
+                delta_pos_world = R_target @ delta_pos
+                self._target_pos = self._target_pos + delta_pos_world
+
+                # Rotation: R_target_new = R_target @ R_delta_local
+                R_delta = rotation_6d_to_matrix(delta_r6d)
+                R_target_new = R_target @ R_delta
+                self._target_r6d = rotation_matrix_to_6d(R_target_new).copy()
+
+                # IK to the new integrator target.
                 T_target = np.eye(4)
-                T_target[:3, :3] = target_rot
+                T_target[:3, :3] = R_target_new
                 T_target[:3, 3] = self._target_pos
 
                 arm_joints = self._sim.get_arm_positions()
                 target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints)
                 self._sim.set_arm_commands(target_joints)
-
-                T_achieved = self._kin.forward(target_joints)
-                self._target_pos = T_achieved[:3, 3].copy()
-                self._target_r6d = rotation_matrix_to_6d(T_achieved[:3, :3]).copy()
 
             return arm_pb2.ArmCommandResponse(success=True)
 
@@ -160,13 +211,34 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         )
 
     def Reset(self, request, context):
-        """Reset the episode: teleport arm + randomize cube."""
+        """Reset the episode: teleport arm + randomize cube.
+
+        If a server reference is available AND the request doesn't pin the
+        joint positions, sample a cube + home pose from the SAME training
+        distribution the dataset was generated with. Otherwise fall back to
+        the legacy local-noise reset around START_JOINTS.
+        """
         try:
+            # Preferred path: training-distribution random reset (matches
+            # collect_grasp_dataset.py exactly).
+            if self._server is not None and len(request.joint_positions) != 7:
+                result = self._server.reset_episode_random()
+                if result is None:
+                    return arm_pb2.ResetResponse(
+                        success=False,
+                        error="reset_episode_random failed to find a feasible home pose",
+                    )
+                cx, cy, cz = result
+                self._cube_start_xy = np.array([cx, cy])
+                logger.info(f"Reset (training-dist): cube=[{cx:.3f}, {cy:.3f}]")
+                return arm_pb2.ResetResponse(success=True, cube_x=cx, cube_y=cy, cube_z=cz)
+
+            # Legacy path: cube via local noise around CUBE_NOMINAL, arm via
+            # local noise around START_JOINTS. Used when no server reference,
+            # or when the caller pins joints explicitly.
             with self._lock:
-                # Randomize cube
                 cx, cy, cz = self._randomize_cube()
 
-                # Arm: use provided joints or randomize
                 if len(request.joint_positions) == 7:
                     joints = np.array(request.joint_positions)
                 else:
@@ -179,7 +251,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 mujoco.mj_forward(self._sim.model, self._sim.data)
                 self._sync_target_from_sim()
 
-            logger.info(f"Reset: arm={joints.round(3).tolist()}, cube=[{cx:.3f}, {cy:.3f}]")
+            logger.info(f"Reset (legacy): arm={joints.round(3).tolist()}, cube=[{cx:.3f}, {cy:.3f}]")
             return arm_pb2.ResetResponse(
                 success=True, cube_x=cx, cube_y=cy, cube_z=cz,
             )
@@ -188,8 +260,16 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
             return arm_pb2.ResetResponse(success=False, error=str(e))
 
     def GetSuccessStatus(self, request, context):
-        """Check if the cube was touched (moved from its initial position)."""
+        """Check if the cube was touched (moved from its initial position).
+
+        Returns goal_reached=False / displacement=0 if the scene has no cube.
+        """
         with self._lock:
+            if not self._has_cube():
+                return arm_pb2.SuccessStatusResponse(
+                    goal_reached=False,
+                    cube_displacement=0.0,
+                )
             cube_xy = self._sim.data.body("red_cube").xpos[:2].copy()
 
         displacement = float(np.linalg.norm(cube_xy - self._cube_start_xy))

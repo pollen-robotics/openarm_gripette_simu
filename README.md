@@ -48,13 +48,34 @@ Identical to the real [Gripette](https://github.com/pollen-robotics/gripette) gR
 
 | RPC | Description |
 |-----|-------------|
-| `SendCartesianDelta(dx, dy, dz, dr6d[6])` | Apply delta to end-effector pose (meters + 6D rotation) |
+| `SendCartesianDelta(dx, dy, dz, dr6d[6])` | Apply delta to end-effector pose (meters + 6D rotation). **Deltas are camera-LOCAL — see below.** |
 | `GetArmState` | Current camera-frame pose (xyz + r6d) and joint positions |
 | `Reset(joint_positions=[])` | Reset episode: randomize cube + arm (empty joints = random start) |
 | `GetSuccessStatus` | Returns `goal_reached` (cube touched) + displacement |
 | `Ping` | Health check |
 
 The 6D rotation representation (Zhou et al., CVPR 2019) matches the action space used by diffusion policies trained with LeRobot.
+
+#### `SendCartesianDelta` is camera-local (integrator semantics)
+
+`(dx, dy, dz)` and `dr6d` are interpreted in the **integrator's current
+camera-frame target**, not in the world frame. The server maintains an
+internal `(_target_pos, _target_r6d)` initialized from FK on startup (and
+re-synced after `Reset`), and each call updates it as:
+
+```python
+R_target = rotation_6d_to_matrix(self._target_r6d)
+self._target_pos = self._target_pos + R_target @ (dx, dy, dz)   # local → world
+self._target_r6d = rotation_matrix_to_6d(R_target @ rotation_6d_to_matrix(dr6d))
+# IK solves to the new (target_pos, target_r6d) and commands the arm joints.
+```
+
+This matches `convert_dataset.py` in lerobot, which builds the per-frame
+action as `R[t].T @ Δpos_world` and `R[t].T @ R[t+1]`. The full rationale is
+in `examples/openarm_gripette/README.md` → "Frame Convention" on the lerobot
+side. To verify the integrator end-to-end against a running server, use the
+**lerobot-side** `cartesian_square.py` (not the one in this repo's
+`examples/`, see "Examples" below).
 
 ### Evaluation loop pattern
 
@@ -140,15 +161,25 @@ To create a new scene, copy an existing one as a template. The robot is included
 
 ## Examples
 
-Standalone demos (no gRPC):
+Standalone demos (no gRPC — each script spawns its own MuJoCo simulation):
 
 ```bash
-uv run python examples/cartesian_square.py   # Cartesian square trajectory
+uv run python examples/cartesian_square.py   # Standalone Cartesian square (NOT a gRPC client)
 uv run python examples/joint_control.py      # Move joints one by one
 uv run python examples/gripper_demo.py       # Gripper open/close cycle
 uv run python examples/table_scene.py        # Table scene with red cube
 uv run python examples/grpc_client_demo.py   # gRPC client (requires server running)
 ```
+
+> **Two `cartesian_square.py` files exist.** The one in *this* repo
+> (`openarm_gripette_simu/examples/cartesian_square.py`) is **standalone**:
+> it imports `Simulation`/`Kinematics` directly and runs its own MuJoCo
+> instance with world-frame waypoints. It is **not** a gRPC client — running
+> `python -m openarm_gripette_simu --scene ...` in another terminal has no
+> effect on it. The canonical end-to-end smoke test of the camera-local
+> delta convention is the *other* `cartesian_square.py` in the lerobot
+> repo: `examples/openarm_gripette/cartesian_square.py`. That one is a gRPC
+> client and tests the integrator semantics described above.
 
 ## Camera
 
